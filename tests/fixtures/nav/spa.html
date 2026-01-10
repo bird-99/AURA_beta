@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AURA SPA Fixture</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+      }
+      main {
+        max-width: 720px;
+        margin: 48px auto;
+      }
+      #spa-content {
+        border: 1px solid #ddd;
+        padding: 16px;
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>SPA Fixture</h1>
+      <p>Testing pushState updates without full reload.</p>
+      <button type="button" id="spa-navigate">Navigate in SPA</button>
+      <div id="spa-content">SPA page 1</div>
+    </main>
+    <script>
+      const content = document.getElementById('spa-content');
+      const button = document.getElementById('spa-navigate');
+      let pageIndex = 1;
+
+      function render() {
+        content.textContent = `SPA page ${pageIndex}`;
+      }
+
+      function triggerSpaNavigation() {
+        pageIndex += 1;
+        history.pushState({ page: pageIndex }, '', `?page=${pageIndex}`);
+        render();
+      }
+
+      button.addEventListener('click', triggerSpaNavigation);
+      window.triggerSpaNavigation = triggerSpaNavigation;
+      window.addEventListener('popstate', () => {
+        const params = new URLSearchParams(window.location.search);
+        const page = Number(params.get('page')) || 1;
+        pageIndex = page;
+        render();
+      });
+    </script>
+  </body>
+</html>

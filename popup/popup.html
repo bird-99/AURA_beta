@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AURA</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container" data-testid="popup-root">
+    <header>
+      <h1 data-testid="popup-title">AURA</h1>
+      <p class="subtitle">Adaptive Accessibility</p>
+    </header>
+
+    <main id="popup-main" class="content" tabindex="-1" role="main">
+      <!-- Section: Mode Controls -->
+      <section id="modes" class="section">
+        <h2>Modes</h2>
+
+        <div id="site-policy-banner" class="policy-banner" style="display: none;">
+          <div id="site-policy-title" class="policy-title"></div>
+          <div id="site-policy-detail" class="policy-detail"></div>
+          <button id="site-policy-override" class="policy-override" type="button" style="display: none;">
+            Try once
+          </button>
+        </div>
+
+        <div class="mode-card" id="comfort-visual-card">
+          <h3>Comfort Visual</h3>
+          <p id="comfort-desc">Enhance readability</p>
+          <button id="comfort-toggle" class="btn-toggle" data-mode="comfort-visual" aria-describedby="comfort-desc">
+            Enable
+          </button>
+        </div>
+
+        <div class="mode-card" id="focus-card">
+          <h3>Focus</h3>
+          <p id="focus-desc">Reduce distractions</p>
+          <button id="focus-toggle" class="btn-toggle" data-mode="focus" aria-describedby="focus-desc">
+            Enable
+          </button>
+        </div>
+      </section>
+
+      <!-- Section: Why This Suggestion? (hidden by default) -->
+      <section id="why-section" class="section" style="display: none;">
+        <h2>Why This Suggestion?</h2>
+        <p id="why-mode">For <strong id="why-mode-name"></strong> mode</p>
+        <p id="why-intro">We detected these signals:</p>
+        <ul id="signals-list"></ul>
+      </section>
+
+      <!-- Section: Performance (Session 11) -->
+      <section id="performance-section" class="section" style="display: none;">
+        <h2>Performance</h2>
+        <div class="metric">
+          <span class="metric-label">AURA Operations/min:</span>
+          <span class="metric-value" id="metric-operations">--</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">CSS Latency (avg):</span>
+          <span class="metric-value" id="metric-latency">-- ms</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Heap Delta:</span>
+          <span class="metric-value" id="metric-heap">-- MB</span>
+        </div>
+        <p id="degraded-warning" class="warning" style="display: none;">
+          ⚠️ Performance degraded. Modes paused.
+        </p>
+      </section>
+
+      <section id="smartscope-status-section" class="section" style="display: none;">
+        <h2>SmartScope status</h2>
+        <ul id="smartscope-status-list" class="status-list"></ul>
+      </section>
+    </main>
+
+    <footer>
+      <a href="#" id="open-options">Settings</a>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

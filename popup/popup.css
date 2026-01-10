@@ -1,0 +1,263 @@
+/* popup/popup.css */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  width: 320px;
+  min-height: 400px;
+  background: #eef2ff;
+  color: #1f2937;
+}
+
+.container {
+  background: white;
+  min-height: 400px;
+}
+
+header {
+  background: linear-gradient(135deg, #312e81 0%, #4338ca 100%);
+  color: white;
+  padding: 20px;
+  text-align: center;
+}
+
+header h1 {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+header .subtitle {
+  font-size: 14px;
+  opacity: 0.9;
+  margin-top: 4px;
+}
+
+.section {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.section:last-of-type {
+  border-bottom: none;
+}
+
+#popup-main:focus-visible {
+  outline: 3px solid #0ea5e9;
+  outline-offset: 4px;
+}
+
+.section h2 {
+  font-size: 16px;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+/* Mode Cards */
+.mode-card {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mode-card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 4px;
+}
+
+.mode-card p {
+  font-size: 12px;
+  color: #374151;
+}
+
+.mode-card.active {
+  border-color: #667eea;
+  background: #f0f4ff;
+}
+
+.btn-toggle {
+  background: #4338ca;
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.btn-toggle:hover {
+  background: #312e81;
+}
+
+.btn-toggle:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.btn-toggle.active {
+  background: #b91c1c;
+}
+
+.btn-toggle:focus-visible {
+  outline: 3px solid #0ea5e9;
+  outline-offset: 2px;
+}
+
+/* Why Section */
+#why-section {
+  background: #fffbea;
+  border: 1px solid #ffc107;
+}
+
+#signals-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+#signals-list li {
+  padding: 4px 0;
+  padding-left: 20px;
+  position: relative;
+  font-size: 14px;
+  color: #555;
+}
+
+#signals-list li::before {
+  content: "\2713";
+  position: absolute;
+  left: 0;
+  color: #ffc107;
+  font-weight: bold;
+}
+
+/* Site policy banner */
+.policy-banner {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.policy-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.policy-detail {
+  font-size: 12px;
+  color: #92400e;
+}
+
+.policy-override {
+  align-self: flex-start;
+  background: #92400e;
+  color: #fff;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.policy-override:hover {
+  background: #78350f;
+}
+
+.policy-override:focus-visible {
+  outline: 3px solid #0ea5e9;
+  outline-offset: 2px;
+}
+
+/* Performance Section */
+.metric {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 14px;
+}
+
+.metric-label {
+  color: #666;
+}
+
+.metric-value {
+  font-weight: 600;
+  color: #333;
+}
+
+.warning {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #856404;
+  padding: 12px;
+  border-radius: 4px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.status-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.status-item {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+}
+
+.status-item .meta {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.status-item.error {
+  border-color: #f59e0b;
+  background: #fff7ed;
+}
+
+footer {
+  padding: 12px;
+  text-align: center;
+  border-top: 1px solid #eee;
+}
+
+footer a {
+  color: #4338ca;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+footer a:hover {
+  text-decoration: underline;
+}
+
+footer a:focus-visible {
+  outline: 3px solid #0ea5e9;
+  outline-offset: 4px;
+  border-radius: 4px;
+}

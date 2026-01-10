@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AURA Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="page" data-testid="options-root">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Configuration</p>
+          <h1 data-testid="options-title">AURA Settings</h1>
+          <p class="lede">Adjust global behaviour, manage domains, and control how AURA learns over time.</p>
+        </div>
+        <div class="status" id="inline-status" role="status" aria-live="polite" hidden></div>
+        <div id="inline-warning" role="status" aria-live="polite" style="display: none"></div>
+      </header>
+
+      <main class="content" aria-live="polite" role="main">
+        <section class="card">
+          <header>
+            <h2>General UI</h2>
+            <p>Banner placement and accessibility preferences for the AURA interface.</p>
+          </header>
+          <div class="field-grid">
+            <div class="field">
+              <label class="field-label">Banner position</label>
+              <div class="pill-group" role="radiogroup" aria-label="Banner position">
+                <label class="pill"><input type="radio" name="banner-position" value="top" /> Top-right</label>
+                <label class="pill"><input type="radio" name="banner-position" value="bottom" /> Bottom-right</label>
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label">Display density</label>
+              <div class="pill-group" role="radiogroup" aria-label="Display density">
+                <label class="pill"><input type="radio" name="display-density" value="compact" /> Compact</label>
+                <label class="pill"><input type="radio" name="display-density" value="comfortable" /> Comfortable</label>
+              </div>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox">
+                <input type="checkbox" id="reduced-motion" /> Reduced motion
+              </label>
+              <p class="hint">Disable animations in AURA UI.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox">
+                <input type="checkbox" id="high-contrast" /> High contrast UI
+              </label>
+              <p class="hint">Increase contrast in popup and banner.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>Comfort Visual</h2>
+            <p>Toggle individual Comfort Visual enhancements without reapplying the mode.</p>
+          </header>
+          <div class="field-grid">
+            <div class="field checkbox-field">
+              <label class="checkbox" for="cv-text-scale">
+                <input type="checkbox" id="cv-text-scale" /> Text scale
+              </label>
+              <p class="hint">Increase base font sizes for easier reading.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="cv-spacing-pack">
+                <input type="checkbox" id="cv-spacing-pack" /> Spacing pack
+              </label>
+              <p class="hint">Improve line height and paragraph spacing.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="cv-link-enhance">
+                <input type="checkbox" id="cv-link-enhance" /> Link enhancement
+              </label>
+              <p class="hint">Improve link visibility for quicker scanning.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="cv-typo-smoothing">
+                <input type="checkbox" id="cv-typo-smoothing" /> Typography smoothing
+              </label>
+              <p class="hint">Refine letter spacing and font rendering.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="cv-reflow-guard">
+                <input type="checkbox" id="cv-reflow-guard" /> Reflow guard
+              </label>
+              <p class="hint">Reduce layout shifts while applying Comfort Visual.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="cv-dark-mode">
+                <input type="checkbox" id="cv-dark-mode" /> Dark mode
+              </label>
+              <p class="hint">Respect dark theme preferences when available.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>Focus</h2>
+            <p>Enable Focus sub-modes and tune their intensity.</p>
+          </header>
+          <label class="switch">
+            <input type="checkbox" id="focus-default-enabled" />
+            <span>Enable Focus by default</span>
+          </label>
+          <p class="hint">Automatically apply Focus on newly loaded pages unless disabled.</p>
+          <div class="field-grid">
+            <div class="field checkbox-field">
+              <label class="checkbox" for="focus-distraction-dim">
+                <input type="checkbox" id="focus-distraction-dim" /> Distraction dim
+              </label>
+              <p class="hint">Dim surrounding content to reduce distractions.</p>
+            </div>
+            <div class="field">
+              <label for="focus-overlay-alpha">Overlay opacity</label>
+              <input type="range" id="focus-overlay-alpha" min="0" max="1" step="0.01" />
+              <p class="hint">Increase for stronger dimming effect.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="focus-reading-ruler">
+                <input type="checkbox" id="focus-reading-ruler" /> Reading ruler
+              </label>
+              <p class="hint">Highlight the active line when reading.</p>
+            </div>
+            <div class="field">
+              <label for="focus-reading-ruler-height">Reading ruler height</label>
+              <input type="range" id="focus-reading-ruler-height" min="40" max="400" step="1" />
+              <p class="hint">Adjust the focus band height in pixels.</p>
+            </div>
+            <div class="field">
+              <label for="focus-reading-ruler-opacity">Reading ruler opacity</label>
+              <input type="range" id="focus-reading-ruler-opacity" min="0" max="0.6" step="0.01" />
+              <p class="hint">Lower values keep more context visible.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="focus-ultra-focus">
+                <input type="checkbox" id="focus-ultra-focus" /> Ultra focus
+              </label>
+              <p class="hint">Mask peripheral UI for deep focus sessions.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="focus-target-boost">
+                <input type="checkbox" id="focus-target-boost" /> Target boost
+              </label>
+              <p class="hint">Emphasise the active element or reading target.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="focus-not-obscured">
+                <input type="checkbox" id="focus-not-obscured" /> Keep target visible
+              </label>
+              <p class="hint">Avoid masking key interactive content.</p>
+            </div>
+            <div class="field checkbox-field">
+              <label class="checkbox" for="focus-reduce-motion">
+                <input type="checkbox" id="focus-reduce-motion" /> Reduce motion
+              </label>
+              <p class="hint">Limit animations while Focus is active.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card two-col">
+          <div>
+            <header>
+              <h2>Thresholds</h2>
+              <p>Confidence levels for showing suggestions and auto-apply.</p>
+            </header>
+            <div class="field">
+              <label for="suggestion-threshold">Suggestion threshold <span id="suggestion-threshold-value">0.6</span></label>
+              <input type="range" id="suggestion-threshold" min="0" max="1" step="0.01" />
+              <p class="hint">Minimum confidence score to show suggestion banner.</p>
+            </div>
+            <div class="field">
+              <label for="auto-threshold">Auto-apply threshold <span id="auto-threshold-value">0.85</span></label>
+              <input type="range" id="auto-threshold" min="0" max="1" step="0.01" />
+              <p class="hint">Minimum confidence to auto-apply when in AUTO stage.</p>
+            </div>
+          </div>
+          <div>
+            <header>
+              <h2>Cooldown</h2>
+              <p>How long to wait before re-suggesting after “Not now”.</p>
+            </header>
+            <label for="cooldown-duration" class="field-label">Cooldown duration</label>
+            <select id="cooldown-duration">
+              <option value="21600000">6 hours</option>
+              <option value="43200000">12 hours</option>
+              <option value="86400000">24 hours (default)</option>
+              <option value="172800000">48 hours</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>Enhanced SPA detection (requires permission)</h2>
+            <p>Detect navigation inside single-page apps using the optional webNavigation permission.</p>
+          </header>
+          <label class="switch">
+            <input type="checkbox" id="spa-toggle" />
+            <span>Enable SPA detection</span>
+          </label>
+          <p class="hint">You can revoke this permission anytime in chrome://extensions.</p>
+          <div class="status" id="spa-status" role="status" aria-live="polite" hidden></div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>SmartScope (Experimental)</h2>
+            <p>Feature-flagged scope detection. Defaults to STRICT baseline until enabled.</p>
+          </header>
+          <label class="switch">
+            <input type="checkbox" id="smartscope-toggle" />
+            <span>Enable SmartScope (experimental)</span>
+          </label>
+          <p class="hint">Off by default to preserve STRICT A.5 baseline.</p>
+          <div class="field" id="smartscope-level-field">
+            <label for="smartscope-level" class="field-label">SmartScope level</label>
+            <select id="smartscope-level">
+              <option value="conservative">Conservative (recommended)</option>
+              <option value="aggressive">Aggressive</option>
+            </select>
+            <p class="hint">Conservative falls back quickly; aggressive tries more variants before STRICT.</p>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="smartscope-domain" class="field-label">Domain override</label>
+              <input type="text" id="smartscope-domain" placeholder="example.com" />
+              <p class="hint">eTLD+1 only. Leave blank to skip.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" for="smartscope-domain-level">Override level</label>
+              <select id="smartscope-domain-level">
+                <option value="conservative">Conservative</option>
+                <option value="aggressive">Aggressive</option>
+              </select>
+              <label class="switch domain-switch">
+                <input type="checkbox" id="smartscope-domain-enabled" />
+                <span>Enable for this domain</span>
+              </label>
+              <button class="btn" id="smartscope-domain-save">Save override</button>
+            </div>
+          </div>
+          <div class="list-editor">
+            <ul id="smartscope-domain-list" class="list"></ul>
+          </div>
+          <div class="status-block" id="smartscope-run-status">
+            <p class="field-label">Recent SmartScope result (active tab)</p>
+            <ul id="smartscope-run-list" class="list compact"></ul>
+          </div>
+          <div class="actions wrap">
+            <button class="btn danger" id="smartscope-panic">Reset SmartScope everywhere</button>
+            <p class="hint">Returns to STRICT A.5, clears overrides, and cleans open tabs.</p>
+          </div>
+          <div class="status" id="smartscope-status" role="status" aria-live="polite" hidden></div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>SmartScope Debug</h2>
+            <p>Structured SmartScope logs (local-only) for troubleshooting.</p>
+          </header>
+          <label class="switch">
+            <input type="checkbox" id="smartscope-debug-toggle" />
+            <span>Enable SmartScope debug logging</span>
+          </label>
+          <div class="actions wrap">
+            <button class="btn" id="smartscope-debug-export">Export SmartScope debug logs</button>
+            <button class="btn danger" id="smartscope-debug-clear">Clear SmartScope debug logs</button>
+          </div>
+          <div class="status" id="smartscope-debug-status" role="status" aria-live="polite" hidden></div>
+          <p class="hint">Debug logs are not included in standard exports and remain on this device.</p>
+        </section>
+
+        <section class="card two-col">
+          <div>
+            <header>
+              <h2>Allowlist</h2>
+              <p>Domains where AURA should always suggest.</p>
+            </header>
+            <div class="list-editor">
+              <div class="input-row">
+                <label class="sr-only" for="allowlist-input">Add allowlist domain</label>
+                <input type="text" id="allowlist-input" placeholder="example.com" />
+                <button class="btn" id="add-allow">Add</button>
+              </div>
+              <ul id="allowlist-items" class="list"></ul>
+            </div>
+          </div>
+          <div>
+            <header>
+              <h2>Denylist</h2>
+              <p>Domains where AURA should never act.</p>
+            </header>
+            <div class="list-editor">
+              <div class="input-row">
+                <label class="sr-only" for="denylist-input">Add denylist domain</label>
+                <input type="text" id="denylist-input" placeholder="ads.example.com" />
+                <button class="btn" id="add-deny">Add</button>
+              </div>
+              <ul id="denylist-items" class="list"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>Learning management</h2>
+            <p>Inspect and reset learning weights per domain.</p>
+          </header>
+          <div class="table-wrapper">
+            <table class="data-table" aria-label="Learning weights">
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th>Modes</th>
+                  <th>Stage</th>
+                  <th>Weight</th>
+                  <th>Last decision</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="learning-body">
+                <tr class="empty-row"><td colspan="6">No learning data yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="actions">
+            <button class="btn danger" id="reset-learning-all">Reset all learning</button>
+          </div>
+          <div class="confirm" id="confirm-reset-learning" hidden>
+            <p>Reset all learning data? This will clear weights and stages for every domain.</p>
+            <div class="confirm-actions">
+              <button class="btn" id="cancel-reset-learning">Cancel</button>
+              <button class="btn danger" id="confirm-reset-learning-btn">Confirm reset</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>Data management</h2>
+            <p>Export, import, or reset all stored data.</p>
+          </header>
+          <div class="actions wrap">
+            <button class="btn" id="export-data">Export data</button>
+            <button class="btn" id="import-data">Import data</button>
+            <input type="file" id="import-file" accept="application/json" hidden />
+            <button class="btn danger" id="reset-all-data">Reset all data</button>
+          </div>
+          <div class="confirm" id="confirm-reset-all" hidden>
+            <p>Reset all data? This cannot be undone.</p>
+            <div class="confirm-actions">
+              <button class="btn" id="cancel-reset-all">Cancel</button>
+              <button class="btn danger" id="confirm-reset-all-btn">Confirm reset</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <h2>Keyboard shortcuts</h2>
+            <p>Open Chrome’s shortcuts page to customise AURA shortcuts.</p>
+          </header>
+          <a class="link" href="chrome://extensions/shortcuts" target="_blank" rel="noreferrer">Open shortcuts</a>
+        </section>
+
+        <div id="inline-warning" role="status" aria-live="polite" class="warning" hidden></div>
+      </main>
+    </div>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

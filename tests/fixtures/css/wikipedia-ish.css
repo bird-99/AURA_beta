@@ -1,0 +1,7 @@
+/* Minimal wikipedia-ish snippet */
+body { color: #202122; line-height: 1.7; }
+#content .mw-parser-output h2, #content .mw-parser-output .infobox { margin-top: 8px; padding-bottom: 12px; }
+@media (max-width: 768px) {
+  .infobox { display: none; }
+  .toc { margin-top: 16px; }
+}

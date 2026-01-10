@@ -1,0 +1,24 @@
+__AURA_SCOPE__ {
+  --aura-focus-padding: clamp(16px, 2vw, 32px);
+  --aura-focus-measure: 70ch;
+}
+
+__AURA_SCOPE__ :is(aside, nav, .ad, .sidebar, .related-content) {
+  display: none;
+}
+
+__AURA_SCOPE__ :is(main, article, [role="main"]) {
+  max-inline-size: min(var(--aura-focus-measure), 100%);
+  width: min(100%, var(--aura-focus-measure));
+  margin-inline: auto;
+  padding-inline: var(--aura-focus-padding);
+}
+
+__AURA_SCOPE__ :is(p, li, blockquote, pre, code, img, video, picture, figure) {
+  animation: none;
+  transition: none;
+}
+
+__AURA_SCOPE__ :is([aria-hidden="true"], .aura-focus-hide) {
+  display: none;
+}

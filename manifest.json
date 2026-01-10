@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extensionName__",
+  "version": "1.0.0",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
+  "minimum_chrome_version": "127",
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "tabs"
+  ],
+  "optional_permissions": [
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/reading-ruler.runtime.js",
+        "content/focus-overlay-v2.runtime.js",
+        "content/ultra-focus.runtime.js",
+        "content/spa-hooks-v2.runtime.js",
+        "content/smartscope-v2.runtime.js",
+        "content/mode-engine-scoped-v2.runtime.js",
+        "content/content-main.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

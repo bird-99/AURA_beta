@@ -1,0 +1,58 @@
+{
+  "extensionName": {
+    "message": "AURA - Adaptive Accessibility",
+    "description": "Extension name shown in the Chrome Web Store and UI."
+  },
+  "extensionDescription": {
+    "message": "Privacy-first accessibility helper that adapts to your browsing needs.",
+    "description": "Extension description for the Chrome Web Store and manifest."
+  },
+  "bannerTitle": {
+    "message": "AURA suggestion",
+    "description": "Title for the suggestion banner."
+  },
+  "bannerMessageComfort": {
+    "message": "We can improve readability on this page.",
+    "description": "Message explaining the Comfort Visual suggestion."
+  },
+  "bannerMessageFocus": {
+    "message": "We can reduce distractions so you can stay focused.",
+    "description": "Message explaining the Focus suggestion."
+  },
+  "bannerButtonEnable": {
+    "message": "Enable",
+    "description": "Call-to-action to enable the suggested mode."
+  },
+  "bannerButtonNotNow": {
+    "message": "Not now",
+    "description": "Dismissal option that delays the suggestion."
+  },
+  "bannerButtonNever": {
+    "message": "Never",
+    "description": "Action to permanently dismiss the suggestion for the current context."
+  },
+  "bannerLinkWhy": {
+    "message": "Why this?",
+    "description": "Link that explains why the suggestion was made."
+  },
+  "bannerConfidenceLabel": {
+    "message": "Confidence",
+    "description": "Label prefix for confidence indicator."
+  },
+  "bannerConfidenceLow": {
+    "message": "Low",
+    "description": "Low confidence level label."
+  },
+  "bannerConfidenceMedium": {
+    "message": "Medium",
+    "description": "Medium confidence level label."
+  },
+  "bannerConfidenceHigh": {
+    "message": "High",
+    "description": "High confidence level label."
+  },
+  "restoreButtonText": {
+    "message": "Restore page",
+    "description": "Button label to undo applied changes."
+  }
+}

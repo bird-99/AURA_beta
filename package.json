@@ -1,0 +1,12 @@
+{
+  "type": "module",
+  "scripts": {
+    "lint": "echo \"lint script not configured; skipping\"",
+    "test": "node --test",
+    "test:a11y": "npx playwright test tests/e2e/a11y-*.spec.js"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@playwright/test": "^1.44.1"
+  }
+}
