@@ -14,11 +14,24 @@
     </style>
   </head>
   <body>
-    <main>
+    <main data-nav-fixture="b">
       <h1>Navigation Fixture B</h1>
       <p>Fixture B content after navigation.</p>
-      <article>
-        <p>Mode should already be applied on this page.</p>
+      <p data-nav-marker="b">AURA_NAV_MARKER_B_AFTER_REHYDRATION</p>
+      <p>
+        This second page mirrors the first fixture with enough article-like text for SmartScope to find a safe root
+        after the browser commits a same-origin navigation. Rehydration should not depend on the previous DOM node
+        still existing; it should verify the new page and apply fresh scoped tokens.
+      </p>
+      <p>
+        The content remains deterministic and local. It gives the mode engine a realistic reading region while avoiding
+        external network access, remote images, or timing-sensitive resources that would make the e2e suite flaky.
+      </p>
+      <article data-nav-article="b">
+        <p>
+          Mode should already be applied on this page, with cleanup and registry behavior handled by the extension
+          rather than by assumptions in the test fixture.
+        </p>
       </article>
       <a href="/nav/a.html">Back to A</a>
     </main>

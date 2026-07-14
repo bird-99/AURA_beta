@@ -1,0 +1,130 @@
+{
+  "name": "product-grid",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_product_grid_v1",
+    "routeEpoch": "aura_pse_route_product_grid_v1",
+    "viewport": {
+      "w": 1440,
+      "h": 860
+    },
+    "pageHints": {
+      "urlKind": "SHOP",
+      "semanticArticleCount": 0,
+      "formCount": 1,
+      "tableCount": 0,
+      "mediaCount": 12,
+      "fixedOrStickyCount": 1,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.34,
+      "linkDensity": 0.32,
+      "interactiveDensity": 0.29,
+      "mediaDensity": 0.28,
+      "formDensity": 0.06,
+      "tableDensity": 0,
+      "viewportCoverage": 0.86
+    },
+    "blocks": [
+      {
+        "blockId": "b_product_grid",
+        "roleHint": "CARD",
+        "rectRatio": {
+          "xRatio": 0.08,
+          "yRatio": 0.12,
+          "widthRatio": 0.84,
+          "heightRatio": 0.72,
+          "visibleRatio": 0.94
+        },
+        "metrics": {
+          "textDensity": 0.32,
+          "linkDensity": 0.3,
+          "interactiveDensity": 0.28,
+          "mediaDensity": 0.34,
+          "formDensity": 0.04,
+          "tableDensity": 0,
+          "viewportCoverage": 0.66
+        },
+        "flags": []
+      }
+    ],
+    "stats": {
+      "elapsedMs": 9,
+      "nodesScanned": 820,
+      "candidatesSeen": 18,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 18,
+        "nodesSampled": 820,
+        "elapsedMs": 9,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_product_grid",
+          "rectBuckets": {
+            "x": 1,
+            "y": 1,
+            "w": 8,
+            "h": 7
+          },
+          "visibleAreaBucket": 6,
+          "viewportIntersectionBucket": 9,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": true,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 0,
+          "linkDensityBucket": 3,
+          "mediaControlSeparationHint": false,
+          "headingHint": false,
+          "listHint": true,
+          "cardHint": true,
+          "centralityBucket": 10
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "SHOP",
+    "minConfidence": 0.82,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_product_grid",
+    "allowedActions": [
+      "FOCUS_VISIBILITY"
+    ],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "REDUCE_MOTION",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "SHOP_PRODUCT_GRID_DETECTED"
+    ],
+    "forbiddenReasons": [
+      "UNKNOWN_LOW_CONFIDENCE"
+    ],
+    "requiredProblems": [],
+    "riskBands": {
+      "layoutRisk": "MEDIUM",
+      "interactionRisk": "MEDIUM"
+    }
+  }
+}

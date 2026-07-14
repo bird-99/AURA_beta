@@ -47,9 +47,12 @@ test('computeSitePolicy blocks unsupported schemes', async () => {
   setupChromeStorage();
 
   const policy = await computeSitePolicy({ url: 'chrome://extensions', now: 1000 });
+  const firefoxExtensionPolicy = await computeSitePolicy({ url: 'moz-extension://extension-id/options.html', now: 1000 });
 
   assert.equal(policy.allowed, false);
   assert.equal(policy.reason, SITE_BLOCK_REASONS.UNSUPPORTED_SCHEME);
+  assert.equal(firefoxExtensionPolicy.allowed, false);
+  assert.equal(firefoxExtensionPolicy.reason, SITE_BLOCK_REASONS.UNSUPPORTED_SCHEME);
 });
 
 test('recordApplyOutcome blocks host after structural failures', async () => {
@@ -109,4 +112,31 @@ test('computeSitePolicy allows overrides to bypass suppression', async () => {
   assert.equal(policy.allowed, true);
   assert.equal(policy.reason, SITE_BLOCK_REASONS.OVERRIDE_ACTIVE);
   assert.equal(policy.overrideUntil, 5000);
+});
+
+test('computeSitePolicy does not apply an ambiguous pre-PSL failure key', async () => {
+  const now = Date.now();
+  setupChromeStorage({
+    [STORAGE_KEYS.SITE_FAILURES_V1]: {
+      'co.ma': { blockedUntil: now + 60_000 },
+    },
+  });
+  __applyFlagOverridesForTests({ siteSuppressV1: true });
+
+  const policy = await computeSitePolicy({ url: 'https://secure.bank.co.ma/login', now });
+  assert.equal(policy.allowed, true);
+  assert.equal(policy.host, 'bank.co.ma');
+});
+
+test('computeSitePolicy fails closed when sensitive storage cannot be read', async () => {
+  setupChromeStorage();
+  __applyFlagOverridesForTests({ siteSuppressV1: true });
+  global.chrome.storage.local.get = async () => {
+    throw new Error('storage offline');
+  };
+
+  const policy = await computeSitePolicy({ url: 'https://example.com', now: Date.now() });
+  assert.equal(policy.allowed, false);
+  assert.equal(policy.reason, 'INTERNAL_ERROR');
+  assert.equal(policy.detail, 'STORAGE_UNAVAILABLE');
 });

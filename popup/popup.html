@@ -8,77 +8,195 @@
 </head>
 <body>
   <div class="container" data-testid="popup-root">
-    <header>
-      <h1 data-testid="popup-title">AURA</h1>
-      <p class="subtitle">Adaptive Accessibility</p>
+    <header class="header">
+      <div class="header-row">
+        <div>
+          <h1 data-testid="popup-title">AURA</h1>
+          <p class="subtitle">Adaptive accessibility</p>
+        </div>
+        <span id="status-chip" class="chip status-chip status-paused" role="status" aria-label="Status: Paused">
+          Paused
+        </span>
+      </div>
+      <div class="site-row">
+        <img id="site-favicon" class="site-favicon is-hidden" alt="" aria-hidden="true">
+        <div class="site-info">
+          <span class="site-label">Current site</span>
+          <span id="current-site" class="site-domain">Unknown</span>
+        </div>
+      </div>
     </header>
 
     <main id="popup-main" class="content" tabindex="-1" role="main">
-      <!-- Section: Mode Controls -->
-      <section id="modes" class="section">
-        <h2>Modes</h2>
+      <section id="quick-actions" class="section">
+        <h2>Quick actions</h2>
 
-        <div id="site-policy-banner" class="policy-banner" style="display: none;">
-          <div id="site-policy-title" class="policy-title"></div>
-          <div id="site-policy-detail" class="policy-detail"></div>
-          <button id="site-policy-override" class="policy-override" type="button" style="display: none;">
-            Try once
+        <div id="recommendation-card" class="card is-hidden">
+          <div class="card-header">
+            <div>
+              <h3>Recommended on this site</h3>
+              <p id="recommendation-description" class="muted"></p>
+            </div>
+            <span id="recommendation-chip" class="chip chip-recommend">Recommended</span>
+          </div>
+          <div class="button-row">
+            <button id="recommendation-enable" class="btn btn-primary" type="button">Enable now</button>
+            <button id="recommendation-not-now" class="btn btn-secondary" type="button">Not now</button>
+            <button id="recommendation-never" class="btn btn-danger" type="button">Never on this site</button>
+          </div>
+          <button id="why-toggle" class="accordion-trigger" type="button" aria-expanded="false" aria-controls="why-section">
+            Why?
+            <span class="accordion-icon caret" aria-hidden="true"></span>
           </button>
+          <section id="why-section" class="accordion-panel is-hidden">
+            <h4>Why this suggestion?</h4>
+            <p id="why-mode">For <strong id="why-mode-name"></strong> mode</p>
+            <p id="why-intro">We detected these signals:</p>
+            <ul id="signals-list"></ul>
+          </section>
+        </div>
+
+        <div id="site-policy-banner" class="policy-banner is-hidden">
+          <div class="policy-content">
+            <div id="site-policy-title" class="policy-title"></div>
+            <div id="site-policy-detail" class="policy-detail"></div>
+          </div>
+          <div class="policy-actions">
+            <button id="site-policy-override" class="btn btn-secondary" type="button">Try once</button>
+            <a href="#" id="site-policy-manage" class="text-link">Manage</a>
+          </div>
+        </div>
+
+        <div id="legacy-domain-migration" class="policy-banner is-hidden" role="status">
+          <div class="policy-content">
+            <div class="policy-title">Legacy site settings found</div>
+            <div id="legacy-domain-migration-detail" class="policy-detail"></div>
+          </div>
+          <div class="policy-actions">
+            <button id="legacy-domain-migration-confirm" class="btn btn-secondary" type="button">
+              Copy to this site
+            </button>
+          </div>
         </div>
 
         <div class="mode-card" id="comfort-visual-card">
-          <h3>Comfort Visual</h3>
-          <p id="comfort-desc">Enhance readability</p>
-          <button id="comfort-toggle" class="btn-toggle" data-mode="comfort-visual" aria-describedby="comfort-desc">
-            Enable
-          </button>
+          <div class="mode-card-main">
+            <div>
+              <div class="mode-header">
+                <h3>Comfort Visual</h3>
+                <span id="comfort-status" class="chip chip-off" aria-hidden="true">OFF</span>
+              </div>
+              <p id="comfort-desc">Enhance readability</p>
+              <span id="comfort-live" class="sr-only" aria-live="polite"></span>
+            </div>
+            <div class="mode-actions">
+              <button
+                id="comfort-toggle"
+                class="btn btn-toggle"
+                data-mode="comfort-visual"
+                aria-describedby="comfort-desc"
+                aria-label="Enable Comfort Visual mode"
+                aria-pressed="false"
+                type="button"
+              >
+                Enable
+              </button>
+              <button
+                id="comfort-features-toggle"
+                class="icon-btn feature-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="comfort-features-panel"
+                aria-label="Comfort Visual feature controls"
+              >
+                <span class="feature-toggle-label">Options</span>
+                <span class="caret" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+          <div
+            id="comfort-dark-theme-slot"
+            class="mode-quick-feature is-hidden"
+            data-mode="comfort-visual"
+          ></div>
+          <div id="comfort-features-panel" class="feature-panel is-hidden" data-mode="comfort-visual"></div>
         </div>
 
         <div class="mode-card" id="focus-card">
-          <h3>Focus</h3>
-          <p id="focus-desc">Reduce distractions</p>
-          <button id="focus-toggle" class="btn-toggle" data-mode="focus" aria-describedby="focus-desc">
-            Enable
-          </button>
+          <div class="mode-card-main">
+            <div>
+              <div class="mode-header">
+                <h3>Focus</h3>
+                <span id="focus-status" class="chip chip-off" aria-hidden="true">OFF</span>
+              </div>
+              <p id="focus-desc">Reduce distractions</p>
+              <span id="focus-live" class="sr-only" aria-live="polite"></span>
+            </div>
+            <div class="mode-actions">
+              <button
+                id="focus-toggle"
+                class="btn btn-toggle"
+                data-mode="focus"
+                aria-describedby="focus-desc"
+                aria-label="Enable Focus mode"
+                aria-pressed="false"
+                type="button"
+              >
+                Enable
+              </button>
+              <button
+                id="focus-features-toggle"
+                class="icon-btn feature-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="focus-features-panel"
+                aria-label="Focus feature controls"
+              >
+                <span class="feature-toggle-label">Options</span>
+                <span class="caret" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+          <div id="focus-features-panel" class="feature-panel is-hidden" data-mode="focus"></div>
         </div>
       </section>
 
-      <!-- Section: Why This Suggestion? (hidden by default) -->
-      <section id="why-section" class="section" style="display: none;">
-        <h2>Why This Suggestion?</h2>
-        <p id="why-mode">For <strong id="why-mode-name"></strong> mode</p>
-        <p id="why-intro">We detected these signals:</p>
-        <ul id="signals-list"></ul>
-      </section>
+      <section class="section">
+        <button id="advanced-toggle" class="accordion-trigger" type="button" aria-expanded="false" aria-controls="advanced-panel">
+          Advanced
+          <span class="accordion-icon caret" aria-hidden="true"></span>
+        </button>
+        <div id="advanced-panel" class="accordion-panel is-hidden">
+          <p id="advanced-empty" class="muted">No diagnostics available.</p>
+          <section id="performance-section" class="subsection is-hidden">
+            <h3>Performance</h3>
+            <div class="metric">
+              <span class="metric-label">AURA Operations/min</span>
+              <span class="metric-value" id="metric-operations">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">CSS Latency (avg)</span>
+              <span class="metric-value" id="metric-latency">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Heap Delta</span>
+              <span class="metric-value" id="metric-heap">--</span>
+            </div>
+            <p id="degraded-warning" class="warning is-hidden">
+              ⚠️ Performance degraded. Modes paused.
+            </p>
+          </section>
 
-      <!-- Section: Performance (Session 11) -->
-      <section id="performance-section" class="section" style="display: none;">
-        <h2>Performance</h2>
-        <div class="metric">
-          <span class="metric-label">AURA Operations/min:</span>
-          <span class="metric-value" id="metric-operations">--</span>
+          <section id="smartscope-status-section" class="subsection is-hidden">
+            <h3>SmartScope status</h3>
+            <ul id="smartscope-status-list" class="status-list"></ul>
+          </section>
         </div>
-        <div class="metric">
-          <span class="metric-label">CSS Latency (avg):</span>
-          <span class="metric-value" id="metric-latency">-- ms</span>
-        </div>
-        <div class="metric">
-          <span class="metric-label">Heap Delta:</span>
-          <span class="metric-value" id="metric-heap">-- MB</span>
-        </div>
-        <p id="degraded-warning" class="warning" style="display: none;">
-          ⚠️ Performance degraded. Modes paused.
-        </p>
-      </section>
-
-      <section id="smartscope-status-section" class="section" style="display: none;">
-        <h2>SmartScope status</h2>
-        <ul id="smartscope-status-list" class="status-list"></ul>
       </section>
     </main>
 
-    <footer>
-      <a href="#" id="open-options">Settings</a>
+    <footer class="footer">
+      <a href="#" id="open-options" class="text-link">Settings</a>
     </footer>
   </div>
 

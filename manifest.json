@@ -9,7 +9,8 @@
     "storage",
     "alarms",
     "scripting",
-    "tabs"
+    "tabs",
+    "favicon"
   ],
   "optional_permissions": [
     "webNavigation"
@@ -29,12 +30,18 @@
         "https://*/*"
       ],
       "js": [
-        "content/reading-ruler.runtime.js",
+        "content/top-layer-host.runtime.js",
+        "content/rect-animator.runtime.js",
+        "content/focus-engine-controller.runtime.js",
         "content/focus-overlay-v2.runtime.js",
         "content/ultra-focus.runtime.js",
-        "content/spa-hooks-v2.runtime.js",
+        "content/reading-ruler.runtime.js",
         "content/smartscope-v2.runtime.js",
         "content/mode-engine-scoped-v2.runtime.js",
+        "content/dark-comfort-theme.runtime.js",
+        "content/page-signals-adapter.runtime.js",
+        "content/content-bootstrap.runtime.js",
+        "content/content-message-router.runtime.js",
         "content/content-main.js"
       ],
       "run_at": "document_start",

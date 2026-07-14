@@ -1,11 +1,13 @@
 (() => {
   const RULER_ATTR = 'data-aura-reading-ruler';
-  const RULER_VERSION = 'v1';
-  const BAND_ATTR = 'data-aura-reading-ruler-band';
+  const RULER_VERSION = 'v2';
   const DEFAULT_HEIGHT_PX = 120;
   const DEFAULT_OPACITY = 0.12;
-  const MAX_Z_INDEX = 2147483647;
-  const EVENT_NAME = 'aura:readingRuler:set';
+  const DEFAULT_BLUR_PX = 0;
+  const DEFAULT_FEATHER_PX = 24;
+  const DEFAULT_TRANSITION_MS = 140;
+  const LINE_STEP_PX = 24;
+  const PAGE_STEP_RATIO = 0.9;
 
   function toFiniteNumber(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value : NaN;
@@ -32,6 +34,22 @@
     return clamp(numeric, 0, 0.6);
   }
 
+  function normalizeBlurPx(value, fallback = DEFAULT_BLUR_PX) {
+    const numeric = toFiniteNumber(value);
+    if (!Number.isFinite(numeric)) {
+      return fallback;
+    }
+    return clamp(numeric, 0, 24);
+  }
+
+  function normalizeFeatherPx(value, fallback = DEFAULT_FEATHER_PX) {
+    const numeric = toFiniteNumber(value);
+    if (!Number.isFinite(numeric)) {
+      return fallback;
+    }
+    return clamp(numeric, 0, 120);
+  }
+
   function getViewportHeight(doc) {
     const view = doc?.defaultView || globalThis;
     const height = toFiniteNumber(doc?.documentElement?.clientHeight);
@@ -39,206 +57,279 @@
     return Number.isFinite(height) && height > 0 ? height : Number.isFinite(fallback) ? fallback : 0;
   }
 
-  function getExistingReadingRulerRoot(doc) {
-    if (!doc?.querySelector) return null;
+  function getSelectionAnchorY(doc, viewportHeight, bandHeight) {
+    if (!doc?.getSelection) return null;
+    const selection = doc.getSelection();
+    if (!selection || selection.rangeCount < 1) return null;
+    let rect = null;
     try {
-      return doc.querySelector(`[${RULER_ATTR}="${RULER_VERSION}"]`);
+      rect = selection.getRangeAt(0)?.getBoundingClientRect?.() || null;
     } catch (error) {
+      rect = null;
+    }
+    const rectTop = toFiniteNumber(rect?.top);
+    const rectHeight = toFiniteNumber(rect?.height);
+    if (!Number.isFinite(rectTop) || !Number.isFinite(rectHeight) || rectHeight <= 0) {
       return null;
     }
+    const rectBottom = rectTop + rectHeight;
+    if (rectBottom <= 0 || rectTop >= viewportHeight) {
+      return null;
+    }
+    const centerY = rectTop + rectHeight / 2;
+    const target = centerY - bandHeight / 2;
+    return clamp(target, 0, Math.max(0, viewportHeight - bandHeight));
   }
 
-  function createReadingRulerRoot(doc, options = {}) {
-    const existing = getExistingReadingRulerRoot(doc);
-    if (existing) {
-      const band = existing.querySelector(`[${BAND_ATTR}]`);
-      return { root: existing, band };
+  function isEditableElement(element) {
+    if (!element) return false;
+    const tag = element.tagName?.toLowerCase?.() || '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+    return element.isContentEditable === true;
+  }
+
+  function getEngineController() {
+    const engine = globalThis.AURA_FOCUS_ENGINE;
+    const getShared = engine?.getSharedController;
+    if (typeof getShared !== 'function') {
+      return null;
+    }
+    return getShared('band', 'reading-ruler');
+  }
+
+  function initReadingRulerBridge() {
+    if (globalThis.__AURA_READING_RULER_EVENTS_BOUND__) {
+      return globalThis.__AURA_READING_RULER_BRIDGE__ || null;
     }
 
-    const root = doc?.createElement?.('div');
-    if (!root) {
-      throw new Error('Cannot create reading ruler without a document');
-    }
+    globalThis.__AURA_READING_RULER_EVENTS_BOUND__ = true;
 
-    root.setAttribute(RULER_ATTR, RULER_VERSION);
-    root.style.position = 'fixed';
-    root.style.inset = '0';
-    root.style.pointerEvents = 'none';
-    root.style.zIndex = String(MAX_Z_INDEX);
-    root.style.display = 'none';
-
-    const band = doc.createElement('div');
-    band.setAttribute(BAND_ATTR, '');
-    band.style.position = 'absolute';
-    band.style.left = '0px';
-    band.style.width = '100%';
-    band.style.pointerEvents = 'none';
-    band.style.backgroundColor = `rgba(0, 0, 0, ${normalizeOpacity(options.opacity)})`;
-    band.style.height = `${normalizeHeight(options.heightPx)}px`;
-
-    root.appendChild(band);
-    const parent = doc.body || doc.documentElement;
-    parent?.appendChild(root);
-
-    return { root, band };
-  }
-
-  function setReadingRulerVisible(handle, visible) {
-    if (!handle?.root) return;
-    handle.root.style.display = visible ? 'block' : 'none';
-  }
-
-  function updateReadingRuler(handle, options = {}) {
-    if (!handle?.band) return;
-    const height = normalizeHeight(options.heightPx);
-    const opacity = normalizeOpacity(options.opacity);
-    const viewportHeight = getViewportHeight(handle.root.ownerDocument);
-
-    const top = Math.max(0, (viewportHeight - height) / 2);
-    handle.band.style.top = `${top}px`;
-    handle.band.style.height = `${height}px`;
-    handle.band.style.backgroundColor = `rgba(0, 0, 0, ${opacity})`;
-  }
-
-  function destroyReadingRuler(handle) {
-    if (!handle?.root) return;
-    handle.root.remove();
-  }
-
-  function createReadingRulerController(doc, options = {}) {
-    const view = doc?.defaultView || globalThis;
-    let handle = null;
+    const view = document?.defaultView || globalThis;
     let enabled = false;
-    let heightPx = normalizeHeight(options.heightPx);
-    let opacity = normalizeOpacity(options.opacity);
+    let heightPx = DEFAULT_HEIGHT_PX;
+    let opacity = DEFAULT_OPACITY;
+    let blurPx = DEFAULT_BLUR_PX;
+    let featherPx = DEFAULT_FEATHER_PX;
+    let reduceMotion = false;
+    let scheduled = false;
     let rafId = null;
+    let controller = null;
     let listenersAttached = false;
+    let keyboardOffset = 0;
+    let lastAnchorY = null;
+    let exitHandler = null;
+
+    const raf = typeof view?.requestAnimationFrame === 'function'
+      ? view.requestAnimationFrame.bind(view)
+      : (callback) => setTimeout(callback, 16);
+    const caf = typeof view?.cancelAnimationFrame === 'function'
+      ? view.cancelAnimationFrame.bind(view)
+      : (id) => clearTimeout(id);
 
     const scheduleUpdate = () => {
-      if (!enabled || !handle) {
-        return;
-      }
-      if (rafId !== null) {
-        return;
-      }
-      const request = view?.requestAnimationFrame || ((cb) => setTimeout(cb, 0));
-      rafId = request(() => {
+      if (!enabled) return;
+      if (scheduled) return;
+      scheduled = true;
+      rafId = raf(() => {
+        scheduled = false;
         rafId = null;
-        updateReadingRuler(handle, { heightPx, opacity });
+        updateBand();
       });
     };
 
-    const stopRaf = () => {
-      if (rafId === null) return;
-      const cancel = view?.cancelAnimationFrame || clearTimeout;
-      cancel(rafId);
-      rafId = null;
-    };
-
-    const onScroll = () => scheduleUpdate();
-    const onResize = () => scheduleUpdate();
-
-    const attachListeners = () => {
-      if (listenersAttached || !view?.addEventListener) return;
-      view.addEventListener('scroll', onScroll, { passive: true });
-      view.addEventListener('resize', onResize);
-      listenersAttached = true;
-    };
-
-    const detachListeners = () => {
-      if (!listenersAttached || !view?.removeEventListener) return;
-      view.removeEventListener('scroll', onScroll, { passive: true });
-      view.removeEventListener('resize', onResize);
-      listenersAttached = false;
-    };
-
-    const setEnabled = (nextEnabled, nextOptions = {}) => {
-      if (typeof nextOptions.heightPx === 'number') {
-        heightPx = normalizeHeight(nextOptions.heightPx, heightPx);
-      }
-      if (typeof nextOptions.opacity === 'number') {
-        opacity = normalizeOpacity(nextOptions.opacity, opacity);
+    const updateBand = () => {
+      if (!enabled) return;
+      if (!controller) {
+        controller = getEngineController();
+        if (!controller) return;
       }
 
-      if (!nextEnabled) {
-        enabled = false;
-        stopRaf();
-        detachListeners();
-        if (handle) {
-          destroyReadingRuler(handle);
-          handle = null;
-        }
+      const viewportHeight = getViewportHeight(document);
+      if (!viewportHeight) {
+        controller.setBand?.(null);
         return;
       }
 
-      enabled = true;
-      if (!handle) {
-        handle = createReadingRulerRoot(doc, { heightPx, opacity });
+      const bandHeight = normalizeHeight(heightPx, DEFAULT_HEIGHT_PX);
+      const anchorY = getSelectionAnchorY(document, viewportHeight, bandHeight);
+      const baseY = Number.isFinite(anchorY)
+        ? anchorY
+        : Math.max(0, (viewportHeight - bandHeight) / 2);
+      if (Number.isFinite(anchorY)) {
+        lastAnchorY = anchorY;
+      } else {
+        lastAnchorY = null;
       }
-      setReadingRulerVisible(handle, true);
-      updateReadingRuler(handle, { heightPx, opacity });
-      attachListeners();
-    };
+      const top = clamp(baseY + keyboardOffset, 0, Math.max(0, viewportHeight - bandHeight));
 
-    const destroy = () => {
-      enabled = false;
-      stopRaf();
-      detachListeners();
-      if (handle) {
-        destroyReadingRuler(handle);
-        handle = null;
-      }
-    };
-
-    return {
-      setEnabled,
-      destroy,
-    };
-  }
-
-  function ensureController(runtime) {
-    if (!runtime.controller) {
-      runtime.controller = createReadingRulerController(document, {
-        heightPx: DEFAULT_HEIGHT_PX,
-        opacity: DEFAULT_OPACITY,
+      controller.setMode?.('band');
+      controller.setBand?.({
+        y: top,
+        height: bandHeight,
+        opacity,
+        blurPx,
+        featherPx,
       });
-    }
-    return runtime.controller;
-  }
+      controller.setEnabled?.(true, {
+        bandAlpha: opacity,
+        bandBlurPx: blurPx,
+        bandFeatherPx: featherPx,
+        bandTransitionMs: reduceMotion ? 0 : DEFAULT_TRANSITION_MS,
+      });
+    };
 
-  function handleReadingRulerEvent(event, runtime) {
-    const detail = event?.detail || {};
-    const enabled = detail.enabled === true;
-    if (!enabled && !runtime.controller) {
-      return;
-    }
+    const ensureMarker = () => {
+      if (document.querySelector(`[${RULER_ATTR}="${RULER_VERSION}"]`)) {
+        return;
+      }
+      const marker = document.createElement('div');
+      marker.setAttribute(RULER_ATTR, RULER_VERSION);
+      marker.style.display = 'none';
+      document.documentElement?.appendChild(marker);
+    };
 
-    const controller = ensureController(runtime);
-    controller.setEnabled(enabled, {
-      heightPx: detail.heightPx,
-      opacity: detail.opacity,
+    const removeMarker = () => {
+      try {
+        document.querySelector(`[${RULER_ATTR}="${RULER_VERSION}"]`)?.remove?.();
+      } catch (error) {
+        // ignore cleanup errors
+      }
+    };
+
+    const stop = () => {
+      enabled = false;
+      keyboardOffset = 0;
+      lastAnchorY = null;
+      if (rafId !== null) {
+        caf(rafId);
+        rafId = null;
+      }
+      scheduled = false;
+      if (controller) {
+        controller.setBand?.(null);
+        controller.setEnabled?.(false);
+      }
+      removeMarker();
+      if (listenersAttached) {
+        view?.removeEventListener?.('scroll', scheduleUpdate);
+        view?.removeEventListener?.('resize', scheduleUpdate);
+        document?.removeEventListener?.('selectionchange', scheduleUpdate);
+        view?.removeEventListener?.('keydown', handleKeydown, true);
+        listenersAttached = false;
+      }
+    };
+
+    const resolveStepSizes = () => {
+      const viewportHeight = getViewportHeight(document);
+      const bandHeight = normalizeHeight(heightPx, DEFAULT_HEIGHT_PX);
+      const lineStep = Math.max(12, Math.round(Math.min(LINE_STEP_PX, bandHeight / 2)));
+      const pageStep = Math.max(lineStep * 4, Math.round(bandHeight * PAGE_STEP_RATIO));
+      return { lineStep, pageStep, maxOffset: Math.max(0, viewportHeight - bandHeight) };
+    };
+
+    const handleKeydown = (event) => {
+      if (!enabled) return;
+      if (event?.isTrusted !== true) return;
+      if (event?.defaultPrevented) return;
+      if (isEditableElement(document?.activeElement)) return;
+
+      const key = event?.key || event?.code;
+      if (!key) return;
+
+      const { lineStep, pageStep, maxOffset } = resolveStepSizes();
+      let delta = 0;
+
+      if (key === 'ArrowUp' || key === 'Up') {
+        delta = -lineStep;
+      } else if (key === 'ArrowDown' || key === 'Down') {
+        delta = lineStep;
+      } else if (key === 'PageUp') {
+        delta = -pageStep;
+      } else if (key === 'PageDown') {
+        delta = pageStep;
+      } else if (key === 'Escape') {
+        stop();
+        try {
+          exitHandler?.({ reason: 'escape' });
+        } catch (error) {
+          // ignore exit notification errors
+        }
+        event?.preventDefault?.();
+        return;
+      } else {
+        return;
+      }
+
+      event?.preventDefault?.();
+      keyboardOffset = clamp((keyboardOffset || 0) + delta, -maxOffset, maxOffset);
+      if (lastAnchorY === null) {
+        scheduleUpdate();
+        return;
+      }
+      scheduleUpdate();
+    };
+
+    const start = () => {
+      if (!listenersAttached) {
+        view?.addEventListener?.('scroll', scheduleUpdate, { passive: true });
+        view?.addEventListener?.('resize', scheduleUpdate);
+        document?.addEventListener?.('selectionchange', scheduleUpdate);
+        view?.addEventListener?.('keydown', handleKeydown, true);
+        listenersAttached = true;
+      }
+      scheduleUpdate();
+    };
+
+    const setState = (detail) => {
+      if (!detail || typeof detail !== 'object') {
+        return;
+      }
+
+      enabled = detail.enabled === true;
+      heightPx = normalizeHeight(detail.heightPx, heightPx);
+      opacity = normalizeOpacity(detail.opacity, opacity);
+      blurPx = normalizeBlurPx(detail.blurPx, blurPx);
+      featherPx = normalizeFeatherPx(detail.featherPx, featherPx);
+      reduceMotion = detail.reduceMotion === true;
+
+      if (!enabled) {
+        stop();
+        return;
+      }
+
+      if (!controller) {
+        controller = getEngineController();
+        if (!controller) return;
+      }
+
+      controller.setMode?.('band');
+      controller.setEnabled?.(true, {
+        bandAlpha: opacity,
+        bandBlurPx: blurPx,
+        bandFeatherPx: featherPx,
+        bandTransitionMs: reduceMotion ? 0 : DEFAULT_TRANSITION_MS,
+      });
+      controller.setBand?.({ y: 0, height: 0, opacity, blurPx, featherPx });
+
+      ensureMarker();
+
+      start();
+    };
+
+    const bridge = Object.freeze({
+      setState,
+      onExit(handler) {
+        exitHandler = typeof handler === 'function' ? handler : null;
+      },
     });
-
-    if (!enabled) {
-      controller.destroy();
-      runtime.controller = null;
-    }
+    globalThis.__AURA_READING_RULER_BRIDGE__ = bridge;
+    return bridge;
   }
 
-  if (globalThis.__AURA_READING_RULER_EVENTS_BOUND__) {
-    return;
-  }
-
-  globalThis.__AURA_READING_RULER_EVENTS_BOUND__ = true;
-
-  const runtimeState = {
-    controller: null,
-  };
-
-  window.addEventListener(EVENT_NAME, (event) => handleReadingRulerEvent(event, runtimeState));
+  const bridge = initReadingRulerBridge();
 
   globalThis.AURA_READING_RULER = Object.freeze({
-    createReadingRulerController,
-    getExistingReadingRulerRoot,
+    setState: bridge?.setState,
+    onExit: bridge?.onExit,
   });
 })();

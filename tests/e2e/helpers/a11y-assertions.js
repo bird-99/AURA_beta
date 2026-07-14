@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { writeAxeResultArtifact } from './axe-artifacts.js';
 
 export async function runA11yAudit(page, options = {}) {
   const { include, exclude, tags } = options;
@@ -34,6 +35,7 @@ export function getCriticalViolations(results) {
 export async function expectNoCriticalA11yViolations(page, options = {}) {
   const results = await runA11yAudit(page, options);
   const criticalViolations = getCriticalViolations(results);
+  await writeAxeResultArtifact(results, { page });
 
   try {
     await test.info().attach('axe-results.json', {

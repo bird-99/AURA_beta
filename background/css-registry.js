@@ -1,4 +1,5 @@
 import { STORAGE_KEYS } from '../shared/constants.js';
+import { mutateSessionValue } from '../shared/utils.js';
 
 const DEFAULT_STORAGE_KEY = STORAGE_KEYS.CSS_REGISTRY;
 const DEFAULT_MAX_ENTRIES = 500;
@@ -37,19 +38,16 @@ async function loadRegistry(storageKey) {
   return existing?.[storageKey] || {};
 }
 
-async function saveRegistry(storageKey, registry) {
-  await chrome.storage.session.set({ [storageKey]: registry });
-}
-
 export class CssRegistry {
   constructor(storageKey = DEFAULT_STORAGE_KEY) {
     this.storageKey = storageKey;
   }
 
-  async register(cssText, origin, meta) {
+  async register(cssText, origin, meta, options = {}) {
     const now = Date.now();
     const cssHash = await computeHash(cssText);
-    const cssId = `aura-css-${now}-${crypto.randomUUID()}`;
+    const requestedCssId = typeof options?.cssId === 'string' ? options.cssId.trim() : '';
+    const cssId = requestedCssId || `aura-css-${now}-${crypto.randomUUID()}`;
 
     const entry = {
       cssId,
@@ -62,9 +60,10 @@ export class CssRegistry {
       },
     };
 
-    const registry = await loadRegistry(this.storageKey);
-    registry[cssId] = entry;
-    await saveRegistry(this.storageKey, registry);
+    await mutateSessionValue(this.storageKey, (storedRegistry) => ({
+      ...(storedRegistry && typeof storedRegistry === 'object' ? storedRegistry : {}),
+      [cssId]: entry,
+    }));
 
     return { cssId, cssHash };
   }
@@ -77,48 +76,54 @@ export class CssRegistry {
     return registry[cssId] || null;
   }
 
+  async list() {
+    const registry = await loadRegistry(this.storageKey);
+    return Object.values(registry || {});
+  }
+
   async remove(cssId) {
     if (!cssId) {
       return;
     }
-    const registry = await loadRegistry(this.storageKey);
-    if (registry[cssId]) {
+    await mutateSessionValue(this.storageKey, (storedRegistry) => {
+      const registry = storedRegistry && typeof storedRegistry === 'object' ? { ...storedRegistry } : {};
       delete registry[cssId];
-      await saveRegistry(this.storageKey, registry);
-    }
+      return registry;
+    });
   }
 
   async cleanup(params = {}) {
-    const { maxAgeMs = DEFAULT_MAX_AGE_MS, maxEntries = DEFAULT_MAX_ENTRIES } = params;
+    const { maxAgeMs = DEFAULT_MAX_AGE_MS, maxEntries = DEFAULT_MAX_ENTRIES, preserveCssIds = [] } = params;
     const now = Date.now();
-    const registry = await loadRegistry(this.storageKey);
-    const entries = Object.values(registry || {});
+    const preserved = new Set((Array.isArray(preserveCssIds) ? preserveCssIds : []).filter(Boolean));
     let removed = 0;
-
-    if (maxAgeMs && Number.isFinite(maxAgeMs)) {
-      for (const entry of entries) {
-        if (typeof entry?.meta?.createdAt === 'number' && now - entry.meta.createdAt > maxAgeMs) {
-          delete registry[entry.cssId];
-          removed += 1;
+    await mutateSessionValue(this.storageKey, (storedRegistry) => {
+      const registry = storedRegistry && typeof storedRegistry === 'object' ? { ...storedRegistry } : {};
+      const entries = Object.values(registry);
+      if (maxAgeMs && Number.isFinite(maxAgeMs)) {
+        for (const entry of entries) {
+          if (preserved.has(entry?.cssId)) continue;
+          if (typeof entry?.meta?.createdAt === 'number' && now - entry.meta.createdAt > maxAgeMs) {
+            delete registry[entry.cssId];
+            removed += 1;
+          }
         }
       }
-    }
-
-    const remainingEntries = Object.values(registry || {});
-    if (maxEntries && Number.isFinite(maxEntries) && remainingEntries.length > maxEntries) {
-      const sorted = [...remainingEntries].sort((a, b) => (b?.meta?.createdAt || 0) - (a?.meta?.createdAt || 0));
-      const toDrop = sorted.slice(maxEntries);
-      for (const entry of toDrop) {
-        if (registry[entry.cssId]) {
-          delete registry[entry.cssId];
-          removed += 1;
+      const remainingEntries = Object.values(registry);
+      if (maxEntries && Number.isFinite(maxEntries) && remainingEntries.length > maxEntries) {
+        const sorted = [...remainingEntries].sort((a, b) => (b?.meta?.createdAt || 0) - (a?.meta?.createdAt || 0));
+        const protectedCount = sorted.filter((entry) => preserved.has(entry?.cssId)).length;
+        const effectiveMaxEntries = Math.max(maxEntries, protectedCount);
+        const toDrop = sorted.slice(effectiveMaxEntries).filter((entry) => !preserved.has(entry?.cssId));
+        for (const entry of toDrop) {
+          if (registry[entry.cssId]) {
+            delete registry[entry.cssId];
+            removed += 1;
+          }
         }
       }
-    }
-
-    if (removed > 0) {
-      await saveRegistry(this.storageKey, registry);
-    }
+      return registry;
+    });
 
     return { removed };
   }

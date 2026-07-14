@@ -1,0 +1,129 @@
+{
+  "name": "article",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_article_v1",
+    "routeEpoch": "aura_pse_route_article_v1",
+    "viewport": {
+      "w": 1280,
+      "h": 720
+    },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 1,
+      "formCount": 0,
+      "tableCount": 0,
+      "mediaCount": 1,
+      "fixedOrStickyCount": 1,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.84,
+      "linkDensity": 0.12,
+      "interactiveDensity": 0.04,
+      "mediaDensity": 0.08,
+      "formDensity": 0,
+      "tableDensity": 0,
+      "viewportCoverage": 0.74
+    },
+    "blocks": [
+      {
+        "blockId": "b_article_main",
+        "roleHint": "ARTICLE",
+        "rectRatio": {
+          "xRatio": 0.18,
+          "yRatio": 0.08,
+          "widthRatio": 0.56,
+          "heightRatio": 0.82,
+          "visibleRatio": 0.91
+        },
+        "metrics": {
+          "textDensity": 0.9,
+          "linkDensity": 0.08,
+          "interactiveDensity": 0.02,
+          "mediaDensity": 0.04,
+          "formDensity": 0,
+          "tableDensity": 0,
+          "viewportCoverage": 0.62
+        },
+        "flags": [
+          "ARTICLE_TEXT_DENSITY_HIGH"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 6,
+      "nodesScanned": 420,
+      "candidatesSeen": 8,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 8,
+        "nodesSampled": 420,
+        "elapsedMs": 6,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_article_main",
+          "rectBuckets": {
+            "x": 2,
+            "y": 1,
+            "w": 6,
+            "h": 8
+          },
+          "visibleAreaBucket": 4,
+          "viewportIntersectionBucket": 9,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": false,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 0,
+          "linkDensityBucket": 1,
+          "mediaControlSeparationHint": false,
+          "headingHint": true,
+          "listHint": false,
+          "cardHint": false,
+          "centralityBucket": 10
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "ARTICLE",
+    "minConfidence": 0.7,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_article_main",
+    "allowedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "FOCUS_VISIBILITY"
+    ],
+    "deniedActions": [
+      "REDUCE_MOTION",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "ARTICLE_TEXT_DENSITY_HIGH"
+    ],
+    "requiredProblems": [],
+    "riskBands": {
+      "layoutRisk": "LOW",
+      "interactionRisk": "LOW"
+    }
+  }
+}

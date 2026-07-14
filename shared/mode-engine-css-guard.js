@@ -2,6 +2,61 @@ import csstree from './vendor/csstree.js';
 
 const DEFAULT_SCOPE = ':where([data-aura-scope="1"])';
 const BANNED_AT_RULES = new Set(['keyframes', 'font-face', 'property', 'page', 'namespace']);
+const DESIGN_SYSTEM_DARK_CUSTOM_PROPERTIES = new Set([
+  '--background',
+  '--foreground',
+  '--card',
+  '--card-foreground',
+  '--popover',
+  '--popover-foreground',
+  '--primary',
+  '--primary-foreground',
+  '--secondary',
+  '--secondary-foreground',
+  '--muted',
+  '--muted-foreground',
+  '--accent',
+  '--accent-foreground',
+  '--border',
+  '--input',
+  '--ring',
+  '--color-background',
+  '--color-foreground',
+  '--color-surface',
+  '--color-surface-2',
+  '--color-text',
+  '--color-muted',
+  '--color-border',
+  '--color-link',
+  '--bs-body-bg',
+  '--bs-body-color',
+  '--bs-border-color',
+  '--bs-link-color',
+  '--bs-link-hover-color',
+  '--bs-secondary-bg',
+  '--bs-tertiary-bg',
+  '--bs-emphasis-color',
+  '--md-sys-color-background',
+  '--md-sys-color-on-background',
+  '--md-sys-color-surface',
+  '--md-sys-color-surface-container',
+  '--md-sys-color-surface-container-high',
+  '--md-sys-color-on-surface',
+  '--md-sys-color-outline',
+  '--md-sys-color-primary',
+  '--md-sys-color-on-primary',
+  '--bgcolor-default',
+  '--bgcolor-muted',
+  '--fgcolor-default',
+  '--fgcolor-muted',
+  '--bordercolor-default',
+  '--color-canvas-default',
+  '--color-canvas-subtle',
+  '--color-fg-default',
+  '--color-fg-muted',
+  '--color-border-default',
+  '--color-accent-fg',
+]);
 const ALLOWED_PROPERTIES = new Set([
   // Typo
   'font-family',
@@ -37,6 +92,7 @@ const ALLOWED_PROPERTIES = new Set([
   // Couleurs
   'color',
   'background-color',
+  'background-image',
   'caret-color',
   'accent-color',
   // Spacing
@@ -53,6 +109,12 @@ const ALLOWED_PROPERTIES = new Set([
   'border-top-color',
   'border-bottom-color',
   'outline-color',
+  'outline-style',
+  'outline-width',
+  'box-shadow',
+  // Runtime sentinel used by post-apply inspection to prove scoped CSS survived guardrails.
+  '--aura-me2-applied',
+  ...DESIGN_SYSTEM_DARK_CUSTOM_PROPERTIES,
 ]);
 
 const SPACING_PROPERTIES = new Set([
@@ -186,15 +248,21 @@ function guardCss({ cssText, scopeSelector = DEFAULT_SCOPE } = {}) {
       return BANNED_PROPERTY_PREFIXES.some((prefix) => property.startsWith(prefix));
     };
 
-    const isAuraVar = (value) => {
-      const match = /^var\(\s*(--aura-[\w-]+)\s*\)$/i.exec(value);
-      return Boolean(match);
+    const isAuraVar = (value, acceptsFallback = () => false) => {
+      const match = /^var\(\s*(--aura-[\w-]+)(?:\s*,\s*([^()]+))?\s*\)$/i.exec(value);
+      if (!match) {
+        return false;
+      }
+
+      const fallback = match[2]?.trim();
+      return !fallback || acceptsFallback(fallback);
     };
 
-    const isAllowedSpacingValue = (value) => {
+    const isAllowedSpacingValue = (value, depth = 0) => {
       if (!value && value !== 0) return false;
       const normalized = `${value}`.trim();
       if (!normalized) return false;
+      if (depth > 1) return false;
 
       if (/calc\s*\(|clamp\s*\(|min\s*\(|max\s*\(/i.test(normalized)) {
         return false;
@@ -208,7 +276,7 @@ function guardCss({ cssText, scopeSelector = DEFAULT_SCOPE } = {}) {
         return true;
       }
 
-      if (isAuraVar(normalized)) {
+      if (isAuraVar(normalized, (fallback) => isAllowedSpacingValue(fallback, depth + 1))) {
         return true;
       }
 
@@ -282,22 +350,39 @@ function guardCss({ cssText, scopeSelector = DEFAULT_SCOPE } = {}) {
             return;
           }
 
+          if (DESIGN_SYSTEM_DARK_CUSTOM_PROPERTIES.has(normalizedProperty) && !isAuraVar(value)) {
+            stats.declarationsBlocked += 1;
+            reasons.push({ code: 'BLOCKED_VALUE', message: `Blocked custom property value for ${normalizedProperty}`, details: value });
+            return;
+          }
+
           if (SPACING_PROPERTIES.has(normalizedProperty) && !isAllowedSpacingValue(value)) {
             stats.declarationsBlocked += 1;
             reasons.push({ code: 'BLOCKED_VALUE', message: `Blocked spacing value for ${normalizedProperty}`, details: value });
             return;
           }
 
+          if (normalizedProperty === 'background-image' && value.toLowerCase() !== 'none') {
+            stats.declarationsBlocked += 1;
+            reasons.push({ code: 'BLOCKED_VALUE', message: 'Blocked background-image value', details: value });
+            return;
+          }
+
           const nextDecl = {
             ...decl,
-            property: normalizedProperty,
+            property: normalizedProperty.startsWith('--') ? property : normalizedProperty,
             value,
           };
 
           if (decl?.important) {
-            stats.importantBlocked += 1;
-            reasons.push({ code: 'IMPORTANT_STRIPPED', message: `Removed !important from ${normalizedProperty}` });
-            nextDecl.important = false;
+            const keepImportant =
+              (normalizedProperty === 'background-image' && value.toLowerCase() === 'none')
+              || (DESIGN_SYSTEM_DARK_CUSTOM_PROPERTIES.has(normalizedProperty) && isAuraVar(value));
+            if (!keepImportant) {
+              stats.importantBlocked += 1;
+              reasons.push({ code: 'IMPORTANT_STRIPPED', message: `Removed !important from ${normalizedProperty}` });
+              nextDecl.important = false;
+            }
           }
 
           filteredDeclarations.append(nextDecl);

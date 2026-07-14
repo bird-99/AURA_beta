@@ -36,8 +36,6 @@ export const SCOPED_TOKEN_KEYS = [
   '--aura-link-decoration-thickness',
   '--aura-link-decoration-offset',
   '--aura-link-underline-position',
-  '--aura-selection-bg',
-  '--aura-selection-text',
   '--aura-color-scheme',
   '--aura-focus-color',
 ];
@@ -190,7 +188,6 @@ export function buildScopedTokenMap(modeId, intensity = 1, _profile = null) {
   return {
     '--aura-font-size': `${fontSizePx.toFixed(2)}px`,
     '--aura-line-height': adjustedLineHeight.toFixed(2),
-    '--aura-font-smoothing': 'auto',
     '--aura-measure-max-inline-size': 'none',
     '--aura-overflow-wrap': 'normal',
     '--aura-word-break': 'normal',
@@ -208,6 +205,11 @@ export function buildScopedModeCssV2({
   smoothTransitions = false,
   transitionMs = 160,
   animAttrName = ANIM_ATTR,
+  textScaleEnabled = true,
+  spacingPackEnabled = true,
+  linkEnhanceEnabled = true,
+  linkColorEnabled = linkEnhanceEnabled,
+  typoSmoothingEnabled = true,
 } = {}) {
   const scope = MODE_ENGINE_SCOPE_SELECTOR;
   const normalized = clampIntensity(intensity);
@@ -216,6 +218,10 @@ export function buildScopedModeCssV2({
   const headingLineHeight = Math.min(baseLineHeight + 0.05, 2);
   const paragraphSpacing = 10 + normalized * 4;
   const letterSpacing = 0.15 + normalized * 0.2;
+  const textScaleActive = modeId !== MODE_IDS.COMFORT_VISUAL || textScaleEnabled !== false;
+  const spacingPackActive = modeId !== MODE_IDS.COMFORT_VISUAL || spacingPackEnabled !== false;
+  const typoSmoothingActive = modeId === MODE_IDS.COMFORT_VISUAL && typoSmoothingEnabled !== false;
+  const letterSpacingActive = modeId === MODE_IDS.FOCUS || typoSmoothingActive;
   const normalizedTransitionMs =
     typeof transitionMs === 'number' && Number.isFinite(transitionMs) && transitionMs >= 0
       ? Math.round(transitionMs)
@@ -230,37 +236,150 @@ export function buildScopedModeCssV2({
     ? `@media (prefers-reduced-motion: reduce) { ${transitionSelector} { animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; } ${scope}, ${scope} :where(*) { scroll-behavior: auto; } }`
     : '';
 
+  const containerLineHeight = spacingPackActive
+    ? ` line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)});`
+    : '';
+  const textLineHeight = spacingPackActive
+    ? ` line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)});`
+    : '';
+  const headingLineHeightRule = spacingPackActive
+    ? ` line-height: var(--aura-line-height, ${headingLineHeight.toFixed(2)});`
+    : '';
+  const containerFontSize = textScaleActive
+    ? ` font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px);`
+    : '';
+  const textFontSize = textScaleActive
+    ? ` font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px);`
+    : '';
+  const containerFontSmoothing = typoSmoothingActive
+    ? ' -webkit-font-smoothing: var(--aura-font-smoothing);'
+    : '';
+  const textLetterSpacing = letterSpacingActive
+    ? ` letter-spacing: var(--aura-letter-spacing, ${letterSpacing.toFixed(2)}px);`
+    : '';
   const containerRule =
-    `${scope} { font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px); line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); color: var(--aura-text-color, inherit); background-color: var(--aura-bg-color, transparent); color-scheme: var(--aura-color-scheme); -webkit-font-smoothing: var(--aura-font-smoothing, auto); box-sizing: border-box; }`;
+    `${scope} { --aura-me2-applied: 1;${containerFontSize}${containerLineHeight} color: var(--aura-text-color, inherit); background-color: var(--aura-bg-color, transparent); color-scheme: var(--aura-color-scheme) !important;${containerFontSmoothing} box-sizing: border-box; }`;
   const textRule =
-    `${scope} :is(p, li, blockquote, pre, code, dd, dt) { font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px); line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); color: var(--aura-text-color, inherit); letter-spacing: var(--aura-letter-spacing, ${letterSpacing.toFixed(2)}px); max-inline-size: var(--aura-measure-max-inline-size, none); overflow-wrap: var(--aura-overflow-wrap, normal); word-break: var(--aura-word-break, normal); hyphens: var(--aura-hyphens, manual); }`;
+    `${scope} :is(p, li, blockquote, pre, code, dd, dt) {${textFontSize}${textLineHeight} color: var(--aura-text-color, inherit);${textLetterSpacing} max-inline-size: var(--aura-measure-max-inline-size, none); }`;
+  const darkTextDescendantRule =
+    `${scope} :where(p, li, blockquote, dd, dt, span, em, strong, small, th, td, label, legend, caption, figcaption) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; }`;
+  const proseReflowRule =
+    `${scope} :where(p, blockquote, dd, dt) { overflow-wrap: var(--aura-overflow-wrap, normal); word-break: var(--aura-word-break, normal); hyphens: var(--aura-hyphens, manual); }`;
+  const codeReflowResetRule =
+    `${scope} :where(pre, code, kbd, samp) { overflow-wrap: normal; word-break: normal; hyphens: manual; }`;
   const paragraphRule =
-    `${scope} p + p { margin-top: var(--aura-paragraph-spacing, ${paragraphSpacing.toFixed(2)}px); }`;
+    spacingPackActive
+      ? `${scope} p + p { margin-top: var(--aura-paragraph-spacing, ${paragraphSpacing.toFixed(2)}px); }`
+      : '';
   const headingRule =
-    `${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]), ${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]) * { line-height: var(--aura-line-height, ${headingLineHeight.toFixed(2)}); color: var(--aura-text-color, inherit); -webkit-text-fill-color: currentColor; text-decoration-color: currentColor; }`;
-  const anchorRule = `${scope} :is(a) { color: var(--aura-link-color); text-decoration-line: var(--aura-link-decoration); text-decoration-thickness: var(--aura-link-decoration-thickness); text-underline-offset: var(--aura-link-decoration-offset); text-decoration-color: currentColor; text-underline-position: var(--aura-link-underline-position); }`;
+    `${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]), ${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]) * {${headingLineHeightRule} color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; text-decoration-color: currentColor; }`;
+  const anchorColorRule = linkColorEnabled
+    ? `${scope} :is(a, [role="link"]) { color: var(--aura-link-color); -webkit-text-fill-color: var(--aura-link-color); }`
+    : '';
+  const anchorDecorationRule = linkEnhanceEnabled
+    ? `${scope} :is(a, [role="link"]) { text-decoration-line: var(--aura-link-decoration); text-decoration-thickness: var(--aura-link-decoration-thickness); text-underline-offset: var(--aura-link-decoration-offset); text-decoration-color: currentColor; text-underline-position: var(--aura-link-underline-position); }`
+    : '';
   const anchorVisitedRule =
-    `${scope} :is(a):visited { color: var(--aura-link-visited-color); }`;
+    linkColorEnabled ? `${scope} :is(a):visited { color: var(--aura-link-visited-color); -webkit-text-fill-color: var(--aura-link-visited-color); }` : '';
   const anchorHoverRule =
-    `${scope} :is(a):hover { color: var(--aura-link-hover-color); }`;
+    linkColorEnabled ? `${scope} :is(a, [role="link"]):hover { color: var(--aura-link-hover-color); -webkit-text-fill-color: var(--aura-link-hover-color); }` : '';
   const taggedSurfaceRule =
     `${scope} [data-aura-surface="1"] { background-color: var(--aura-surface-1) !important; border-color: var(--aura-border-color) !important; }`;
   const taggedSurfaceRaisedRule =
     `${scope} [data-aura-surface="2"] { background-color: var(--aura-surface-2) !important; border-color: var(--aura-border-color) !important; }`;
+  const taggedAppShellRule =
+    `${scope} [data-aura-surface-kind="app-shell"] { background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; box-shadow: 0 1px 0 var(--aura-border-color) !important; }`;
+  const taggedAppShellContentRule =
+    `${scope} [data-aura-surface-kind="app-shell"] :where(a, [role="link"], button, [role="button"], span, p, small, strong, em, label, summary) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
   const forceTextRule =
-    `${scope} [data-aura-force-text="1"] { color: var(--aura-text-color) !important; }`;
+    `${scope} [data-aura-force-text="1"] { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; }`;
   const forceTextContentRule =
-    `${scope} [data-aura-force-text="1"] :where(p, li, span, h1, h2, h3, h4, h5, h6, dt, dd, blockquote, code, pre) { color: var(--aura-text-color) !important; }`;
+    `${scope} [data-aura-force-text="1"] :where(p, li, span, h1, h2, h3, h4, h5, h6, dt, dd, blockquote, code, pre) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; }`;
   const borderRule =
     `${scope} :is(table, thead, tbody, tr, td, th, blockquote, pre, code, hr) { border-color: var(--aura-border-color); }`;
   const mutedTextRule =
-    `${scope} :is(caption, figcaption, small) { color: var(--aura-muted-text-color, inherit); }`;
+    `${scope} :is(caption, figcaption, small) { color: var(--aura-muted-text-color, inherit); -webkit-text-fill-color: var(--aura-muted-text-color, inherit); }`;
   const controlRule =
-    `${scope} :where(input, textarea, select, button) { background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+    `${scope} :where(input, textarea, select, button) { background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
   const controlPlaceholderRule =
-    `${scope} :is(input, textarea, select)::placeholder { color: var(--aura-muted-text-color, inherit); }`;
+    `${scope} :is(input, textarea, select)::placeholder { color: var(--aura-muted-text-color, inherit); -webkit-text-fill-color: var(--aura-muted-text-color, inherit); }`;
+  const darkTokenScope = `${scope}[data-aura-scope-tokens*="--aura-color-scheme"]`;
+  const darkTokenScopeRootRule =
+    `${darkTokenScope} { background-color: var(--aura-bg-color) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkDesignSystemLocalTokenSelector =
+    ':where(dialog, [popover], [aria-modal="true"], [data-theme], [data-color-mode], [data-bs-theme], [data-mui-color-scheme], [data-surface], [data-card], [data-panel], [data-dialog], [data-popover], [data-radix-popper-content-wrapper], [data-headlessui-portal], [data-floating-ui-portal], [class*="card" i], [class*="panel" i], [class*="surface" i], [class*="modal" i], [class*="dialog" i], [class*="popover" i], [class*="dropdown" i], [class*="tooltip" i], [class*="overlay" i], [class*="portal" i], [class*="menu" i], [class*="sheet" i], [class*="drawer" i], [class*="callout" i], [class*="toast" i], [role="dialog"], [role="alertdialog"], [role="menu"], [role="menubar"], [role="listbox"], [role="tooltip"], [role="tree"], [role="tablist"], [role="tabpanel"])';
+  const darkDesignSystemTokenDeclarationsRaw =
+    '--background: var(--aura-bg-color) !important; --foreground: var(--aura-text-color) !important; --card: var(--aura-surface-1) !important; --card-foreground: var(--aura-text-color) !important; --popover: var(--aura-surface-1) !important; --popover-foreground: var(--aura-text-color) !important; --primary: var(--aura-link-color) !important; --primary-foreground: var(--aura-bg-color) !important; --secondary: var(--aura-surface-2) !important; --secondary-foreground: var(--aura-text-color) !important; --muted: var(--aura-surface-2) !important; --muted-foreground: var(--aura-muted-text-color) !important; --accent: var(--aura-surface-2) !important; --accent-foreground: var(--aura-text-color) !important; --destructive: #7f1d1d !important; --destructive-foreground: #fecaca !important; --border: var(--aura-border-color) !important; --input: var(--aura-border-color) !important; --ring: var(--aura-focus-color) !important; --sidebar: var(--aura-surface-1) !important; --sidebar-foreground: var(--aura-text-color) !important; --sidebar-primary: var(--aura-link-color) !important; --sidebar-primary-foreground: var(--aura-bg-color) !important; --sidebar-accent: var(--aura-surface-2) !important; --sidebar-accent-foreground: var(--aura-text-color) !important; --sidebar-border: var(--aura-border-color) !important; --sidebar-ring: var(--aura-focus-color) !important; --surface: var(--aura-surface-1) !important; --surface-foreground: var(--aura-text-color) !important; --panel: var(--aura-surface-1) !important; --panel-foreground: var(--aura-text-color) !important; --color-background: var(--aura-bg-color) !important; --color-foreground: var(--aura-text-color) !important; --color-surface: var(--aura-surface-1) !important; --color-surface-2: var(--aura-surface-2) !important; --color-text: var(--aura-text-color) !important; --color-muted: var(--aura-muted-text-color) !important; --color-border: var(--aura-border-color) !important; --color-link: var(--aura-link-color) !important; --bs-body-bg: var(--aura-bg-color) !important; --bs-body-color: var(--aura-text-color) !important; --bs-border-color: var(--aura-border-color) !important; --bs-link-color: var(--aura-link-color) !important; --bs-link-hover-color: var(--aura-link-hover-color) !important; --bs-secondary-bg: var(--aura-surface-2) !important; --bs-tertiary-bg: var(--aura-surface-1) !important; --bs-emphasis-color: var(--aura-text-color) !important; --mui-palette-background-default: var(--aura-bg-color) !important; --mui-palette-background-paper: var(--aura-surface-1) !important; --mui-palette-text-primary: var(--aura-text-color) !important; --mui-palette-text-secondary: var(--aura-muted-text-color) !important; --mui-palette-divider: var(--aura-border-color) !important; --mui-palette-primary-main: var(--aura-link-color) !important; --mui-palette-action-hover: var(--aura-surface-2) !important; --ant-color-bg-container: var(--aura-surface-1) !important; --ant-color-bg-elevated: var(--aura-surface-1) !important; --ant-color-bg-layout: var(--aura-bg-color) !important; --ant-color-text: var(--aura-text-color) !important; --ant-color-text-secondary: var(--aura-muted-text-color) !important; --ant-color-border: var(--aura-border-color) !important; --ant-color-primary: var(--aura-link-color) !important; --ant-color-link: var(--aura-link-color) !important; --chakra-colors-chakra-body-bg: var(--aura-bg-color) !important; --chakra-colors-chakra-body-text: var(--aura-text-color) !important; --chakra-colors-bg: var(--aura-bg-color) !important; --chakra-colors-bg-subtle: var(--aura-surface-1) !important; --chakra-colors-bg-muted: var(--aura-surface-2) !important; --chakra-colors-fg: var(--aura-text-color) !important; --chakra-colors-fg-muted: var(--aura-muted-text-color) !important; --chakra-colors-border: var(--aura-border-color) !important; --md-sys-color-background: var(--aura-bg-color) !important; --md-sys-color-on-background: var(--aura-text-color) !important; --md-sys-color-surface: var(--aura-surface-1) !important; --md-sys-color-surface-container: var(--aura-surface-1) !important; --md-sys-color-surface-container-high: var(--aura-surface-2) !important; --md-sys-color-on-surface: var(--aura-text-color) !important; --md-sys-color-outline: var(--aura-border-color) !important; --md-sys-color-primary: var(--aura-link-color) !important; --md-sys-color-on-primary: var(--aura-bg-color) !important; --bgColor-default: var(--aura-bg-color) !important; --bgColor-muted: var(--aura-surface-1) !important; --fgColor-default: var(--aura-text-color) !important; --fgColor-muted: var(--aura-muted-text-color) !important; --borderColor-default: var(--aura-border-color) !important; --color-canvas-default: var(--aura-bg-color) !important; --color-canvas-subtle: var(--aura-surface-1) !important; --color-fg-default: var(--aura-text-color) !important; --color-fg-muted: var(--aura-muted-text-color) !important; --color-border-default: var(--aura-border-color) !important; --color-accent-fg: var(--aura-link-color) !important;';
+  const formatSensitiveDesignTokens = new Set([
+    '--background', '--foreground', '--card', '--card-foreground', '--popover', '--popover-foreground',
+    '--primary', '--primary-foreground', '--secondary', '--secondary-foreground', '--muted', '--muted-foreground',
+    '--accent', '--accent-foreground', '--destructive', '--destructive-foreground', '--border', '--input', '--ring',
+    '--sidebar', '--sidebar-foreground', '--sidebar-primary', '--sidebar-primary-foreground', '--sidebar-accent',
+    '--sidebar-accent-foreground', '--sidebar-border', '--sidebar-ring', '--surface', '--surface-foreground',
+    '--panel', '--panel-foreground', '--color-background', '--color-foreground', '--color-surface', '--color-surface-2',
+    '--color-text', '--color-muted', '--color-border', '--color-link',
+  ]);
+  const darkDesignSystemTokenDeclarations = darkDesignSystemTokenDeclarationsRaw
+    .split(';')
+    .map((declaration) => declaration.trim())
+    .filter((declaration) => declaration && !formatSensitiveDesignTokens.has(declaration.split(':', 1)[0].trim()))
+    .join('; ');
+  const darkDesignSystemTokenRule =
+    `${darkTokenScope}, ${darkTokenScope} ${darkDesignSystemLocalTokenSelector} { ${darkDesignSystemTokenDeclarations} }`;
+  const darkOverlaySurfaceSelector =
+    ':where(dialog, [popover], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-portal], [data-floating-ui-portal], [class*="modal" i], [class*="dialog" i], [class*="popover" i], [class*="dropdown" i], [class*="tooltip" i], [class*="overlay" i], [class*="portal" i], [class*="sheet" i], [class*="drawer" i], [role="dialog"], [role="alertdialog"], [role="menu"], [role="menubar"], [role="listbox"], [role="tooltip"], [role="tree"], [role="tablist"])';
+  const darkOverlaySurfaceRule =
+    `${darkTokenScope} ${darkOverlaySurfaceSelector} { background-color: var(--aura-surface-1) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35) !important; }`;
+  const darkOverlaySurfaceContentRule =
+    `${darkTokenScope} ${darkOverlaySurfaceSelector} :where(a, [role="link"], button, [role="button"], input, textarea, select, label, summary, div, span, p, small, strong, em, li) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkComplexArticleSurfaceRule =
+    `${darkTokenScope} :where(table, thead, tbody, tfoot, tr, th, td, caption, aside, nav, header, footer, section, article, figure, figcaption, details, summary, fieldset, legend, blockquote, dl, dt, dd, [role="navigation"], [role="complementary"], [role="note"], [role="region"], [role="contentinfo"], [class*="mw-" i], [class*="vector-" i], [class*="wiki" i], [class*="infobox" i], [class*="toc" i], [class*="thumb" i], [class*="navbox" i], [class*="metadata" i], [class*="ambox" i]) { background-color: var(--aura-surface-1) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkComplexArticleImageRule =
+    `${darkTokenScope} :is([class*="mw-" i], [class*="vector-" i], [class*="wiki" i], [class*="infobox" i], [class*="toc" i], [class*="thumb" i], [class*="navbox" i], [class*="metadata" i], [class*="ambox" i], [id*="mw-" i], [id*="wiki" i], [id*="infobox" i], [id*="toc" i], [id*="thumb" i], [id*="navbox" i], [id*="metadata" i], [id*="ambox" i]):not([data-aura-bg-text-gradient="1"]) { background-image: none !important; }`;
+  const darkComplexArticleRaisedSurfaceRule =
+    `${darkTokenScope} :where(th, thead, tfoot, caption, [class*="toc" i], [class*="infobox" i], [class*="thumbinner" i], [class*="navbox" i], [class*="mw-portlet" i], [class*="vector-menu" i]) { background-color: var(--aura-surface-2) !important; }`;
+  const darkPseudoSurfaceSelector =
+    ':where([class*="card" i], [class*="panel" i], [class*="modal" i], [class*="popover" i], [class*="dropdown" i], [class*="tooltip" i], [class*="surface" i], [class*="sheet" i], [class*="drawer" i], [class*="callout" i], [class*="toast" i], [class*="banner" i], [data-surface], [data-card], [data-panel], [data-callout], [popover], [role="dialog"], [role="alertdialog"], [role="tooltip"])';
+  const darkPseudoSurfaceRule =
+    `${darkTokenScope} ${darkPseudoSurfaceSelector}::before, ${darkTokenScope} ${darkPseudoSurfaceSelector}::after { background-color: var(--aura-surface-1) !important; background-image: none !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkPartSurfaceSelector = [
+    'base',
+    'surface',
+    'container',
+    'content',
+    'panel',
+    'card',
+    'dialog',
+    'popover',
+    'menu',
+    'listbox',
+    'option',
+    'item',
+    'body',
+    'header',
+    'footer',
+    'heading',
+    'label',
+    'description',
+  ].map((part) => `${darkTokenScope} :where(*)::part(${part})`).join(', ');
+  const darkPartControlSelector = [
+    'button',
+    'control',
+    'input',
+    'textarea',
+    'select',
+    'checkbox',
+    'radio',
+    'switch',
+    'thumb',
+    'track',
+  ].map((part) => `${darkTokenScope} :where(*)::part(${part})`).join(', ');
+  const darkPartSurfaceRule =
+    `${darkPartSurfaceSelector} { ${darkDesignSystemTokenDeclarations} background-color: var(--aura-surface-1) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkPartControlRule =
+    `${darkPartControlSelector} { ${darkDesignSystemTokenDeclarations} background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; accent-color: var(--aura-focus-color); }`;
   const comfortSpecific =
-    modeId === MODE_IDS.COMFORT_VISUAL
+    modeId === MODE_IDS.COMFORT_VISUAL && typoSmoothingActive
       ? [
           `${scope} :is(p, li, blockquote, dd, dt, span, em, strong) { word-spacing: 0.02em; text-rendering: optimizeLegibility; font-kerning: normal; }`,
         ].join(' ')
@@ -272,17 +391,21 @@ export function buildScopedModeCssV2({
           `${scope} :is(a, button, input, select, textarea, [tabindex]):focus { outline: 2px solid var(--aura-focus-color, #0a84ff); outline-offset: 3px; }`,
           `${scope} :is(a):focus-visible { text-decoration: underline; text-decoration-offset: 0.2em; text-decoration-thickness: 0.14em; text-decoration-color: currentColor; }`,
           `${scope} :is(a):focus { text-decoration: underline; text-decoration-offset: 0.2em; text-decoration-thickness: 0.14em; text-decoration-color: currentColor; }`,
-          `${scope} .aura-target-boost { min-inline-size: 24px; min-block-size: 24px; padding: 2px 4px; box-sizing: border-box; border-radius: 4px; }`,
+          `${scope} .aura-target-boost { min-inline-size: 24px; min-block-size: 24px; max-inline-size: 100%; padding: 2px 4px; box-sizing: border-box; border-radius: 4px; vertical-align: middle; }`,
+          `${scope} .aura-target-boost:focus-visible { outline: 2px solid var(--aura-focus-color, #0a84ff); outline-offset: 3px; }`,
         ].join(' ')
       : '';
-  const reduceMotionRule =
-    reduceMotion && (modeId === MODE_IDS.FOCUS || smoothTransitions)
-      ? [
-          `${scope} :where(*, *::before, *::after) { animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; }`,
-          `${scope}, ${scope} :where(*) { scroll-behavior: auto; }`,
-        ].join(' ')
-      : '';
-  const preRule = `${scope} :is(pre, code) { line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); }`;
+  const reduceMotionSelector =
+    `${scope} :where(*, *::before, *::after):not(video):not(audio):not(canvas):not(svg):not(iframe):not(progress):not([role="progressbar"]):not([aria-busy="true"]):not([data-aura-allow-motion="1"])`;
+  const reduceMotionRule = reduceMotion
+    ? [
+        `${reduceMotionSelector} { animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; }`,
+        `${scope}, ${scope} :where(*) { scroll-behavior: auto; }`,
+      ].join(' ')
+    : '';
+  const preRule = spacingPackActive
+    ? `${scope} :is(pre, code) { line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); }`
+    : '';
   const mediaRule = `${scope} :is(img, video, picture, figure) { max-inline-size: 100%; height: auto; }`;
   const modeSpecific = modeId === MODE_IDS.FOCUS
     ? `${scope} :is(p, li, blockquote) { letter-spacing: var(--aura-letter-spacing, ${letterSpacing.toFixed(2)}px); }`
@@ -300,19 +423,35 @@ export function buildScopedModeCssV2({
     prefersReduceMotionRule,
     containerRule,
     textRule,
+    darkTextDescendantRule,
+    proseReflowRule,
+    codeReflowResetRule,
     paragraphRule,
     headingRule,
-    anchorRule,
+    anchorColorRule,
+    anchorDecorationRule,
     anchorVisitedRule,
     anchorHoverRule,
     taggedSurfaceRule,
     taggedSurfaceRaisedRule,
+    taggedAppShellRule,
+    taggedAppShellContentRule,
     forceTextRule,
     forceTextContentRule,
     borderRule,
     mutedTextRule,
     controlRule,
     controlPlaceholderRule,
+    darkTokenScopeRootRule,
+    darkDesignSystemTokenRule,
+    darkOverlaySurfaceRule,
+    darkOverlaySurfaceContentRule,
+    darkComplexArticleSurfaceRule,
+    darkComplexArticleImageRule,
+    darkComplexArticleRaisedSurfaceRule,
+    darkPseudoSurfaceRule,
+    darkPartSurfaceRule,
+    darkPartControlRule,
     comfortSpecific,
     focusSpecific,
     reduceMotionRule,
@@ -687,7 +826,7 @@ export function applyScopedTokens(element, tokenMap = {}, ownerKey = '') {
   return result;
 }
 
-export function cleanupScopedTokens(element, ownerKey = '', ownedKeys = []) {
+export function cleanupScopedTokens(element, ownerKey = '', ownedKeys = [], options = {}) {
   if (!element || !element.style || typeof element.style.removeProperty !== 'function') {
     return { ok: false, removed: 0, reason: 'invalid-element' };
   }
@@ -708,13 +847,14 @@ export function cleanupScopedTokens(element, ownerKey = '', ownedKeys = []) {
   });
 
   if (typeof element.removeAttribute === 'function') {
-    if (!ownedKeys.length) {
-      element.removeAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR);
-    }
-    element.removeAttribute(SCOPE_OWNER_ATTR);
-    const scopeValue = element.getAttribute ? element.getAttribute(SCOPE_ATTR) : null;
-    if (scopeValue === SCOPE_ATTR_VALUE) {
-      element.removeAttribute(SCOPE_ATTR);
+    const preserveScope = options?.preserveScope === true;
+    element.removeAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR);
+    if (!preserveScope) {
+      element.removeAttribute(SCOPE_OWNER_ATTR);
+      const scopeValue = element.getAttribute ? element.getAttribute(SCOPE_ATTR) : null;
+      if (scopeValue === SCOPE_ATTR_VALUE) {
+        element.removeAttribute(SCOPE_ATTR);
+      }
     }
   }
 
@@ -972,13 +1112,13 @@ export function applyScopedTokensBySelector(selector, tokenMap = {}, ownerKey = 
   }
 }
 
-export function cleanupScopedTokensBySelector(selector, ownerKey = '', ownedKeys = []) {
+export function cleanupScopedTokensBySelector(selector, ownerKey = '', ownedKeys = [], options = {}) {
   try {
     const element = document.querySelector(selector);
     if (!element) {
       return { ok: false, removed: 0, reason: 'not-found' };
     }
-    return cleanupScopedTokens(element, ownerKey, ownedKeys);
+    return cleanupScopedTokens(element, ownerKey, ownedKeys, options);
   } catch (error) {
     return { ok: false, removed: 0, reason: 'invalid-selector' };
   }
@@ -1012,6 +1152,18 @@ export function removeTokensOwned(scopeEl, ownedKeys = []) {
   }
 
   keys.forEach((key) => scopeEl.style.removeProperty(key));
+  if (typeof scopeEl.getAttribute === 'function' && typeof scopeEl.setAttribute === 'function') {
+    const previousTokens = scopeEl.getAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR) || '';
+    const remaining = previousTokens
+      .split(',')
+      .filter(Boolean)
+      .filter((key) => !keys.includes(key));
+    if (remaining.length) {
+      scopeEl.setAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR, remaining.join(','));
+    } else if (typeof scopeEl.removeAttribute === 'function') {
+      scopeEl.removeAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR);
+    }
+  }
   return { ok: true, removed: keys.length };
 }
 

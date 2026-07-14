@@ -16,8 +16,8 @@ function createHarness({
     },
   };
 
-  const rehydrateActiveModesForTab = async (tabId, reason) => {
-    calls.push({ tabId, reason });
+  const rehydrateActiveModesForTab = async (tabId, reason, context) => {
+    calls.push({ tabId, reason, context });
   };
 
   const tabsApi = {
@@ -61,7 +61,7 @@ test('handleTabUpdated rehydrates on complete with active mode', async () => {
 
   await handlers.handleTabUpdated(123, { status: 'complete' }, { url: 'https://example.com' });
 
-  assert.deepEqual(calls, [{ tabId: 123, reason: 'tab-complete' }]);
+  assert.deepEqual(calls, [{ tabId: 123, reason: 'tab-complete', context: { url: 'https://example.com' } }]);
 });
 
 test('handleTabActivated rehydrates active tabs with supported url', async () => {
@@ -69,7 +69,7 @@ test('handleTabActivated rehydrates active tabs with supported url', async () =>
 
   await handlers.handleTabActivated({ tabId: 456 });
 
-  assert.deepEqual(calls, [{ tabId: 456, reason: 'tab-activated' }]);
+  assert.deepEqual(calls, [{ tabId: 456, reason: 'tab-activated', context: undefined }]);
 });
 
 test('handleTabActivated skips unsupported schemes', async () => {

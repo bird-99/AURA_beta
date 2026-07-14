@@ -1,6 +1,12 @@
 import { SITE_BLOCK_REASONS, STORAGE_KEYS } from '../shared/constants.js';
 import { isFlagEnabled } from '../shared/feature-flags.js';
-import { getFromLocal, setToLocal } from '../shared/utils.js';
+import {
+  extractDomain,
+  getDomainKeyCandidates,
+  getFromLocal,
+  mutateLocalValue,
+  readLocalValueResult,
+} from '../shared/utils.js';
 
 export const WINDOW_MS = 30 * 60 * 1000;
 export const FAIL_THRESHOLD = 3;
@@ -18,19 +24,21 @@ const UNSUPPORTED_SCHEMES = new Set([
   'edge:',
   'about:',
   'chrome-extension:',
+  'moz-extension:',
   'file:'
 ]);
 
-export function getHostFromUrl(url) {
+export function getSiteKeyFromUrl(url) {
   if (typeof url !== 'string') {
     return null;
   }
 
-  try {
-    return new URL(url).host || null;
-  } catch (error) {
+  const siteKey = extractDomain(url);
+  if (!siteKey || siteKey === 'unknown') {
     return null;
   }
+
+  return siteKey;
 }
 
 export function isUnsupportedScheme(url) {
@@ -46,20 +54,21 @@ export function isUnsupportedScheme(url) {
   }
 }
 
-function buildInternalErrorPolicy() {
+function buildInternalErrorPolicy(host = null, detail = null) {
   return {
     allowed: false,
     reason: 'INTERNAL_ERROR',
-    host: null,
+    host,
     blockedUntil: null,
-    overrideUntil: null
+    overrideUntil: null,
+    ...(detail ? { detail } : {}),
   };
 }
 
 export async function computeSitePolicy({ url, now = Date.now() } = {}) {
   try {
     if (isUnsupportedScheme(url)) {
-      const host = getHostFromUrl(url);
+      const host = getSiteKeyFromUrl(url);
       return {
         allowed: false,
         reason: SITE_BLOCK_REASONS.UNSUPPORTED_SCHEME,
@@ -73,39 +82,52 @@ export async function computeSitePolicy({ url, now = Date.now() } = {}) {
       return {
         allowed: true,
         reason: null,
-        host: getHostFromUrl(url),
+        host: getSiteKeyFromUrl(url),
         blockedUntil: null,
         overrideUntil: null
       };
     }
 
-    const host = getHostFromUrl(url);
-    if (!host) {
+    const siteKey = getSiteKeyFromUrl(url);
+    if (!siteKey) {
       return buildInternalErrorPolicy();
     }
 
-    const [failures, overrides] = await Promise.all([
-      getFromLocal(STORAGE_KEYS.SITE_FAILURES_V1),
-      getFromLocal(STORAGE_KEYS.SITE_OVERRIDES_V1)
+    const [failureRead, overrideRead] = await Promise.all([
+      readLocalValueResult(STORAGE_KEYS.SITE_FAILURES_V1),
+      readLocalValueResult(STORAGE_KEYS.SITE_OVERRIDES_V1)
     ]);
+    if (!failureRead.ok || !overrideRead.ok) {
+      return buildInternalErrorPolicy(siteKey, 'STORAGE_UNAVAILABLE');
+    }
+    const failures = failureRead.status === 'found' ? failureRead.value : {};
+    const overrides = overrideRead.status === 'found' ? overrideRead.value : {};
+    if (
+      !failures || typeof failures !== 'object' || Array.isArray(failures)
+      || !overrides || typeof overrides !== 'object' || Array.isArray(overrides)
+    ) {
+      return buildInternalErrorPolicy(siteKey, 'INVALID_STORAGE_VALUE');
+    }
 
-    const overrideEntry = overrides?.[host];
+    const overrideKey = getDomainKeyCandidates(siteKey).find((key) => overrides?.[key]);
+    const overrideEntry = overrideKey ? overrides[overrideKey] : null;
     if (overrideEntry?.overrideUntil && overrideEntry.overrideUntil > now) {
       return {
         allowed: true,
         reason: SITE_BLOCK_REASONS.OVERRIDE_ACTIVE,
-        host,
+        host: siteKey,
         blockedUntil: null,
         overrideUntil: overrideEntry.overrideUntil
       };
     }
 
-    const failureEntry = failures?.[host];
+    const failureKey = getDomainKeyCandidates(siteKey).find((key) => failures?.[key]);
+    const failureEntry = failureKey ? failures[failureKey] : null;
     if (failureEntry?.blockedUntil && failureEntry.blockedUntil > now) {
       return {
         allowed: false,
         reason: SITE_BLOCK_REASONS.REPEATED_APPLY_FAILURE,
-        host,
+        host: siteKey,
         blockedUntil: failureEntry.blockedUntil,
         overrideUntil: null
       };
@@ -114,7 +136,7 @@ export async function computeSitePolicy({ url, now = Date.now() } = {}) {
     return {
       allowed: true,
       reason: null,
-      host,
+      host: siteKey,
       blockedUntil: null,
       overrideUntil: null
     };
@@ -126,56 +148,45 @@ export async function computeSitePolicy({ url, now = Date.now() } = {}) {
 
 export async function recordApplyOutcome({ url, ok, failReason } = {}) {
   try {
-    const host = getHostFromUrl(url);
-    if (!host) {
+    const siteKey = getSiteKeyFromUrl(url);
+    if (!siteKey) {
       return null;
     }
 
-    const failures = (await getFromLocal(STORAGE_KEYS.SITE_FAILURES_V1)) || {};
-
-    if (ok) {
-      if (failures[host]) {
-        delete failures[host];
-        await setToLocal(STORAGE_KEYS.SITE_FAILURES_V1, failures);
+    if (!ok && !SUPPORTED_FAIL_REASONS.has(failReason)) {
+      return { host: siteKey, ignored: true };
+    }
+    let outcome = null;
+    await mutateLocalValue(STORAGE_KEYS.SITE_FAILURES_V1, (storedFailures) => {
+      const failures = storedFailures && typeof storedFailures === 'object' ? { ...storedFailures } : {};
+      if (ok) {
+        delete failures[siteKey];
+        outcome = { host: siteKey, reset: true };
+        return failures;
       }
-      return { host, reset: true };
-    }
 
-    if (!SUPPORTED_FAIL_REASONS.has(failReason)) {
-      return { host, ignored: true };
-    }
-
-    const now = Date.now();
-    const entry = failures[host] || {
-      failCount: 0,
-      windowStartAt: now,
-      lastFailAt: now,
-      lastFailReason: failReason,
-      blockedUntil: null
-    };
-
-    if (now - entry.windowStartAt > WINDOW_MS) {
-      entry.failCount = 0;
-      entry.windowStartAt = now;
-      entry.blockedUntil = null;
-    }
-
-    entry.failCount += 1;
-    entry.lastFailAt = now;
-    entry.lastFailReason = failReason;
-
-    if (entry.failCount >= FAIL_THRESHOLD) {
-      entry.blockedUntil = now + BLOCK_MS;
-    }
-
-    failures[host] = entry;
-    await setToLocal(STORAGE_KEYS.SITE_FAILURES_V1, failures);
-
-    return {
-      host,
-      failCount: entry.failCount,
-      blockedUntil: entry.blockedUntil
-    };
+      const now = Date.now();
+      const entry = { ...(failures[siteKey] || {
+        failCount: 0,
+        windowStartAt: now,
+        lastFailAt: now,
+        lastFailReason: failReason,
+        blockedUntil: null,
+      }) };
+      if (now - entry.windowStartAt > WINDOW_MS) {
+        entry.failCount = 0;
+        entry.windowStartAt = now;
+        entry.blockedUntil = null;
+      }
+      entry.failCount += 1;
+      entry.lastFailAt = now;
+      entry.lastFailReason = failReason;
+      if (entry.failCount >= FAIL_THRESHOLD) entry.blockedUntil = now + BLOCK_MS;
+      failures[siteKey] = entry;
+      outcome = { host: siteKey, failCount: entry.failCount, blockedUntil: entry.blockedUntil };
+      return failures;
+    });
+    return outcome;
   } catch (error) {
     console.warn('[SitePolicy] recordApplyOutcome failed', error);
     return null;
@@ -186,78 +197,55 @@ export function isStructuralFailureReason(reason) {
   return SUPPORTED_FAIL_REASONS.has(reason);
 }
 
-export async function setHostOverride({ host, overrideUntil } = {}) {
+export async function setSiteOverride({ siteKey, overrideUntil } = {}) {
   try {
-    if (!host) {
+    if (!siteKey) {
       return false;
     }
 
-    const overrides = (await getFromLocal(STORAGE_KEYS.SITE_OVERRIDES_V1)) || {};
-
-    if (!overrideUntil || typeof overrideUntil !== 'number') {
-      if (overrides[host]) {
-        delete overrides[host];
-        await setToLocal(STORAGE_KEYS.SITE_OVERRIDES_V1, overrides);
+    await mutateLocalValue(STORAGE_KEYS.SITE_OVERRIDES_V1, (storedOverrides) => {
+      const overrides = storedOverrides && typeof storedOverrides === 'object' ? { ...storedOverrides } : {};
+      if (!overrideUntil || typeof overrideUntil !== 'number') {
+        delete overrides[siteKey];
+      } else {
+        overrides[siteKey] = { overrideUntil };
       }
-      return true;
-    }
-
-    overrides[host] = { overrideUntil };
-    await setToLocal(STORAGE_KEYS.SITE_OVERRIDES_V1, overrides);
+      return overrides;
+    });
     return true;
   } catch (error) {
-    console.warn('[SitePolicy] setHostOverride failed', error);
+    console.warn('[SitePolicy] setSiteOverride failed', error);
     return false;
   }
 }
 
 export async function gcSitePolicyStorage({ now = Date.now() } = {}) {
   try {
-    const [failures, overrides] = await Promise.all([
-      getFromLocal(STORAGE_KEYS.SITE_FAILURES_V1),
-      getFromLocal(STORAGE_KEYS.SITE_OVERRIDES_V1)
-    ]);
-
-    const failureEntries = failures || {};
-    const overrideEntries = overrides || {};
-    const failureKeys = Object.keys(failureEntries);
-    const overrideKeys = Object.keys(overrideEntries);
-
-    if (!failureKeys.length && !overrideKeys.length) {
-      return { removedFailures: 0, removedOverrides: 0 };
-    }
-
     let removedFailures = 0;
     let removedOverrides = 0;
-
-    for (const host of failureKeys) {
-      const entry = failureEntries[host];
-      if (!entry) continue;
-      const lastFailAt = entry.lastFailAt || 0;
-      const blockedUntil = entry.blockedUntil || 0;
-      const isExpired = lastFailAt < now - GC_MAX_AGE_MS && blockedUntil <= now;
-      if (isExpired) {
-        delete failureEntries[host];
-        removedFailures += 1;
+    await mutateLocalValue(STORAGE_KEYS.SITE_FAILURES_V1, (storedFailures) => {
+      const failureEntries = storedFailures && typeof storedFailures === 'object' ? { ...storedFailures } : {};
+      for (const [host, entry] of Object.entries(failureEntries)) {
+        if (!entry) continue;
+        const lastFailAt = entry.lastFailAt || 0;
+        const blockedUntil = entry.blockedUntil || 0;
+        if (lastFailAt < now - GC_MAX_AGE_MS && blockedUntil <= now) {
+          delete failureEntries[host];
+          removedFailures += 1;
+        }
       }
-    }
-
-    for (const host of overrideKeys) {
-      const entry = overrideEntries[host];
-      if (!entry) continue;
-      if (entry.overrideUntil <= now) {
-        delete overrideEntries[host];
-        removedOverrides += 1;
+      return failureEntries;
+    });
+    await mutateLocalValue(STORAGE_KEYS.SITE_OVERRIDES_V1, (storedOverrides) => {
+      const overrideEntries = storedOverrides && typeof storedOverrides === 'object' ? { ...storedOverrides } : {};
+      for (const [host, entry] of Object.entries(overrideEntries)) {
+        if (entry && entry.overrideUntil <= now) {
+          delete overrideEntries[host];
+          removedOverrides += 1;
+        }
       }
-    }
-
-    if (removedFailures > 0) {
-      await setToLocal(STORAGE_KEYS.SITE_FAILURES_V1, failureEntries);
-    }
-
-    if (removedOverrides > 0) {
-      await setToLocal(STORAGE_KEYS.SITE_OVERRIDES_V1, overrideEntries);
-    }
+      return overrideEntries;
+    });
 
     return { removedFailures, removedOverrides };
   } catch (error) {

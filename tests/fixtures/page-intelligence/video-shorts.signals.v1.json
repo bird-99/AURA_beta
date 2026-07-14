@@ -1,0 +1,57 @@
+{
+  "name": "video-shorts",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_video_shorts_v1",
+    "routeEpoch": "aura_pse_route_video_shorts_v1",
+    "viewport": { "w": 390, "h": 844 },
+    "pageHints": {
+      "urlKind": "VIDEO",
+      "semanticArticleCount": 0,
+      "formCount": 0,
+      "tableCount": 0,
+      "mediaCount": 2,
+      "fixedOrStickyCount": 2,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.12,
+      "linkDensity": 0.1,
+      "interactiveDensity": 0.42,
+      "mediaDensity": 0.68,
+      "formDensity": 0,
+      "tableDensity": 0,
+      "viewportCoverage": 0.9
+    },
+    "blocks": [
+      {
+        "blockId": "b_shorts_player",
+        "roleHint": "PLAYER",
+        "rectRatio": { "xRatio": 0.02, "yRatio": 0.02, "widthRatio": 0.96, "heightRatio": 0.92, "visibleRatio": 0.96 },
+        "metrics": {
+          "textDensity": 0.06,
+          "linkDensity": 0.04,
+          "interactiveDensity": 0.46,
+          "mediaDensity": 0.94,
+          "formDensity": 0,
+          "tableDensity": 0,
+          "viewportCoverage": 0.82
+        },
+        "flags": ["VIDEO_MEDIA_DENSITY_HIGH", "VIDEO_PAGE_TYPOGRAPHY_BLOCKED"]
+      }
+    ],
+    "stats": { "elapsedMs": 6, "nodesScanned": 520, "candidatesSeen": 10, "budgetHit": false }
+  },
+  "expected": {
+    "pageType": "VIDEO",
+    "minConfidence": 0.75,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_shorts_player",
+    "allowedActions": ["FOCUS_VISIBILITY", "REDUCE_MOTION"],
+    "deniedActions": ["READING_COMFORT_TYPOGRAPHY", "TARGET_SIZE"],
+    "requiredReasons": ["VIDEO_MEDIA_DENSITY_HIGH", "VIDEO_PAGE_TYPOGRAPHY_BLOCKED"],
+    "requiredProblems": ["HIGH_LAYOUT_RISK", "HIGH_INTERACTION_RISK"],
+    "riskBands": { "layoutRisk": "HIGH", "interactionRisk": "HIGH" }
+  }
+}

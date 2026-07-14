@@ -1,12 +1,35 @@
 {
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
-    "lint": "echo \"lint script not configured; skipping\"",
+    "lint": "node scripts/lint.mjs",
+    "checkjs:shared-core": "tsc -p tsconfig.checkjs.json --pretty false",
+    "checkjs:background": "tsc -p tsconfig.checkjs.background.json --pretty false",
+    "checkjs:content-dom": "tsc -p tsconfig.checkjs.content-dom.json --pretty false",
+    "checkjs:options": "tsc -p tsconfig.checkjs.options.json --pretty false",
+    "checkjs:node": "tsc -p tsconfig.checkjs.node.json --pretty false",
+    "typecheck": "npm run lint && npm run checkjs:shared-core && npm run checkjs:background && npm run checkjs:content-dom && npm run checkjs:options && npm run checkjs:node && npm run test:contracts",
+    "test:contracts": "node --test tests/unit/manifest-contract.test.js tests/unit/content-route-contract.test.js tests/unit/content-message-router-runtime.test.js tests/unit/e2e-helper-export-surface.test.js tests/unit/mode-engine-runtime-parity.test.js tests/unit/checkjs-config-contract.test.js tests/unit/vendor-tldts-contract.test.js tests/token-contract.spec.mjs tests/unit/shared-constants-bridge.test.js tests/unit/no-shared-dynamic-imports.test.js tests/unit/no-shared-url-imports-in-content.test.js tests/unit/engine-core-purity.test.js tests/unit/engine-core-validators.test.js tests/unit/engine-core-fixture-schema.test.js tests/unit/page-signals-adapter.test.js tests/unit/page-router.test.js tests/unit/adaptation-contracts.test.js tests/unit/action-policy.test.js tests/unit/guaranteed-effect-matrix.test.js tests/unit/runtime-effect-planner.test.js tests/unit/learning-eligibility.test.js tests/unit/template-memory.test.js tests/unit/template-evidence.test.js tests/unit/template-memory-storage.test.js tests/unit/personalization-gate.test.js tests/unit/live-personalization-gate.test.js tests/unit/auto-apply-focus-default.test.js tests/unit/shadow-replay.test.js tests/unit/shadow-replay-isolation.test.js",
     "test": "node --test",
-    "test:a11y": "npx playwright test tests/e2e/a11y-*.spec.js"
+    "test:e2e": "playwright test --workers=1 tests/e2e/banner-decision.spec.js tests/e2e/content-routing.spec.js tests/e2e/focus-scoped.spec.js tests/e2e/hooks-exposure.spec.js tests/e2e/navigation-persistence.spec.js tests/e2e/options-data-management.spec.js tests/e2e/options-domain-configuration.spec.js tests/e2e/options-learning-management.spec.js tests/e2e/popup-exclusivity.spec.js tests/e2e/storage-lifecycle-concurrency.spec.js",
+    "test:a11y": "playwright test --workers=1 tests/e2e/a11y-banner.spec.js tests/e2e/a11y-options.spec.js tests/e2e/a11y-popup.spec.js tests/e2e/a11y-welcome.spec.js",
+    "report:pfe:evidence": "node scripts/generate-pfe-evidence.mjs",
+    "report:page-understanding": "node scripts/page-understanding-capability-report.mjs",
+    "report:page-understanding:write": "node scripts/page-understanding-capability-report.mjs --write artifacts/reports/page-understanding-capability-report.md",
+    "report:page-understanding:quality": "node scripts/page-understanding-quality-report.mjs",
+    "report:page-understanding:quality:write": "node scripts/page-understanding-quality-report.mjs --write artifacts/reports/page-understanding-quality-report.md",
+    "vendor:tldts": "node scripts/vendor-tldts.mjs"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.10.0",
-    "@playwright/test": "^1.44.1"
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1",
+    "@types/chrome": "^0.2.2",
+    "@types/node": "^24.13.3",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "tldts": "7.4.8"
   }
 }

@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import {
   createReadingRulerController,
   createReadingRulerRoot,
   getExistingReadingRulerRoot,
   updateReadingRuler,
 } from '../shared/reading-ruler.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const contentRuntimeSource = readFileSync(resolve(__dirname, '../content/reading-ruler.runtime.js'), 'utf8');
+const contentMainSource = readFileSync(resolve(__dirname, '../content/content-main.js'), 'utf8');
 
 class FakeElement {
   constructor(tagName = 'DIV') {
@@ -71,6 +79,7 @@ class FakeWindow {
   constructor() {
     this.listeners = new Map();
     this.innerHeight = 800;
+    this.dispatched = [];
   }
 
   addEventListener(type, listener) {
@@ -85,10 +94,21 @@ class FakeWindow {
     this.listeners.get(type).delete(listener);
   }
 
+  dispatchEvent(event) {
+    this.dispatched.push(event);
+    const listeners = this.listeners.get(event?.type) || new Set();
+    for (const listener of listeners) {
+      listener(event);
+    }
+    return true;
+  }
+
   requestAnimationFrame(cb) {
     cb();
     return 1;
   }
+
+  cancelAnimationFrame() {}
 }
 
 class FakeDocument {
@@ -99,6 +119,7 @@ class FakeDocument {
     this.body.ownerDocument = this;
     this.documentElement.ownerDocument = this;
     this.defaultView = defaultView;
+    this.listeners = new Map();
   }
 
   createElement(tag) {
@@ -111,6 +132,22 @@ class FakeDocument {
     if (this.body.matchesSelector(selector)) return this.body;
     if (this.documentElement.matchesSelector(selector)) return this.documentElement;
     return this.body.querySelector(selector) || this.documentElement.querySelector(selector);
+  }
+
+  addEventListener(type, listener) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set());
+    }
+    this.listeners.get(type).add(listener);
+  }
+
+  removeEventListener(type, listener) {
+    if (!this.listeners.has(type)) return;
+    this.listeners.get(type).delete(listener);
+  }
+
+  getSelection() {
+    return null;
   }
 }
 
@@ -140,4 +177,100 @@ test('reading ruler controller removes the root when disabled', () => {
 
   controller.setEnabled(false);
   assert.equal(getExistingReadingRulerRoot(document), null, 'root removed on disable');
+});
+
+test('content reading ruler runtime exits on Escape and restores exact marker state', () => {
+  const view = new FakeWindow();
+  const document = new FakeDocument(view, 800);
+  const controllerCalls = [];
+  const controller = {
+    setMode(mode) {
+      controllerCalls.push(['mode', mode]);
+    },
+    setBand(band) {
+      controllerCalls.push(['band', band]);
+    },
+    setEnabled(enabled, options) {
+      controllerCalls.push(['enabled', enabled, options || null]);
+    },
+  };
+  const sandbox = {
+    console,
+    document,
+    setTimeout,
+    clearTimeout,
+    CustomEvent: class CustomEvent {
+      constructor(type, init = {}) {
+        this.type = type;
+        this.detail = init.detail;
+      }
+    },
+    AURA_FOCUS_ENGINE: {
+      getSharedController(kind, owner) {
+        assert.equal(kind, 'band');
+        assert.equal(owner, 'reading-ruler');
+        return controller;
+      },
+    },
+  };
+  sandbox.globalThis = sandbox;
+  sandbox.addEventListener = view.addEventListener.bind(view);
+  sandbox.removeEventListener = view.removeEventListener.bind(view);
+  sandbox.dispatchEvent = view.dispatchEvent.bind(view);
+  sandbox.requestAnimationFrame = view.requestAnimationFrame.bind(view);
+  sandbox.cancelAnimationFrame = view.cancelAnimationFrame.bind(view);
+  document.defaultView = sandbox;
+
+  runInNewContext(contentRuntimeSource, sandbox);
+
+  sandbox.dispatchEvent(new sandbox.CustomEvent('aura:readingRuler:set', {
+    detail: { enabled: true, heightPx: 140, opacity: 0.2 },
+  }));
+  assert.equal(
+    document.querySelector('[data-aura-reading-ruler="v2"]'),
+    null,
+    'public page events cannot control the isolated runtime',
+  );
+
+  let exitReason = null;
+  sandbox.AURA_READING_RULER.onExit((detail) => {
+    exitReason = detail?.reason || null;
+  });
+  sandbox.AURA_READING_RULER.setState({ enabled: true, heightPx: 140, opacity: 0.2 });
+
+  assert.ok(document.querySelector('[data-aura-reading-ruler="v2"]'), 'runtime marker exists while enabled');
+
+  sandbox.dispatchEvent({
+    type: 'keydown',
+    key: 'Escape',
+    isTrusted: false,
+    preventDefault() {},
+  });
+  assert.ok(document.querySelector('[data-aura-reading-ruler="v2"]'), 'synthetic Escape is ignored');
+
+  let prevented = false;
+  sandbox.dispatchEvent({
+    type: 'keydown',
+    key: 'Escape',
+    isTrusted: true,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+
+  assert.equal(prevented, true, 'Escape is consumed as the explicit exit key');
+  assert.equal(document.querySelector('[data-aura-reading-ruler="v2"]'), null, 'runtime marker removed on exit');
+  assert.ok(
+    controllerCalls.some(([kind, value]) => kind === 'enabled' && value === false),
+    'shared band controller is disabled',
+  );
+  assert.equal(exitReason, 'escape', 'runtime notifies the private orchestrator callback');
+});
+
+test('content orchestrator turns Reading Ruler off after runtime Escape exit', () => {
+  assert.doesNotMatch(contentMainSource, /aura:readingRuler:exit/);
+  assert.match(contentMainSource, /AURA_READING_RULER\?\.onExit/);
+  assert.match(contentMainSource, /event\.isTrusted !== true/);
+  assert.match(contentMainSource, /if \(typeof collector !== 'function'\) \{\s*return false;\s*\}/);
+  assert.match(contentMainSource, /setReadingRulerPreference\(false, 'reading-ruler-exit'\)/);
 });

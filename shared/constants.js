@@ -1,5 +1,7 @@
 // shared/constants.js
 
+import { getDefaultComfortVisualPrefs } from './comfort-visual-prefs.js';
+
 // ========== MODE IDs ==========
 export const MODE_IDS = {
   COMFORT_VISUAL: 'comfort-visual',
@@ -19,10 +21,12 @@ export const MODE_ENGINE_FLAG_DEFAULTS = {
   smartScopeSpaHooks: true,
   siteSuppressV1: false,
   ultraFocusV1: true,
+  ultraFocusMagnifierV1: false,
   contrastGuardV1: false,
   targetBoostV1: true,
   comfortDarkModeV1: false,
   smoothThemeTransitionsV2: false,
+  shadowReplayLabV1: false,
   debugModeEngine: false,
   debugTestHooks: false,
 };
@@ -44,6 +48,14 @@ export const STATES = {
   BLOCKED: 'BLOCKED',
   DEGRADED: 'DEGRADED',
   ERROR: 'ERROR'
+};
+
+export const ACTIVE_QUALITIES = {
+  SCOPED_V2_VERIFIED: 'SCOPED_V2_VERIFIED',
+  PAGE_CLARITY_MEDIUM_VERIFIED: 'PAGE_CLARITY_MEDIUM_VERIFIED',
+  GLOBAL_SAFE_FALLBACK_UNVERIFIED: 'GLOBAL_SAFE_FALLBACK_UNVERIFIED',
+  SMARTSCOPE_V1_VERIFIED: 'SMARTSCOPE_V1_VERIFIED',
+  LEGACY_UNVERIFIED: 'LEGACY_UNVERIFIED'
 };
 
 // ========== SMARTSCOPE LEVELS ==========
@@ -81,6 +93,15 @@ export const THRESHOLDS = {
   HEAP_WARNING: 50          // Heap delta > 50MB → WARNING (diagnostic only)
 };
 
+// ========== POLICY DEFAULTS ==========
+export const POLICY_DEFAULTS = {
+  HYSTERESIS_GAP: 0.12,
+  APPLY_STABILITY_MS: 30 * 1000,
+  COOLDOWN_MS: 5 * 60 * 1000,
+  STRONG_SIGNAL_CONFIDENCE: 0.6,
+  MIN_STRONG_SIGNALS_FOR_APPLY: 2,
+};
+
 // ========== COOLDOWN DURATIONS (ms) ==========
 export const COOLDOWN_DURATIONS = {
   // Roadmap v5.2: "Not now" triggers a 24h cooldown
@@ -102,7 +123,9 @@ export const LEARNING_ADJUSTMENTS = {
 export const SIGNALS = {
   ZOOM: 'zoom',
   COLOR_SCHEME: 'colorScheme',
-  READING_BEHAVIOR: 'readingBehavior'
+  READING_BEHAVIOR: 'readingBehavior',
+  VIEWPORT_SCALE: 'viewportScale',
+  VIEWPORT_SCROLL: 'viewportScroll'
 };
 
 // ========== MESSAGE ACTIONS ==========
@@ -117,8 +140,11 @@ export const ACTIONS = {
   INJECT_RESTORE_BUTTON: 'INJECT_RESTORE_BUTTON',
   REMOVE_RESTORE_BUTTON: 'REMOVE_RESTORE_BUTTON',
   RESTORE_MODE: 'RESTORE_MODE',
+  RESET_ALL_DATA: 'RESET_ALL_DATA',
   GET_STATE: 'GET_STATE',
+  GET_DEBUG_SNAPSHOT: 'GET_DEBUG_SNAPSHOT',
   GET_PERFORMANCE_METRICS: 'GET_PERFORMANCE_METRICS',
+  SIGNAL_SNAPSHOT_UPDATED: 'SIGNAL_SNAPSHOT_UPDATED',
   SMARTSCOPE_VERIFY_COMPUTED_STYLES_V1: 'SMARTSCOPE_VERIFY_COMPUTED_STYLES_V1',
   SMARTSCOPE_SET_CONFIG_V1: 'SMARTSCOPE_SET_CONFIG_V1',
   SMARTSCOPE_RESET_V1: 'SMARTSCOPE_RESET_V1',
@@ -126,19 +152,31 @@ export const ACTIONS = {
   MODE_ENGINE_V2_REAPPLY_ACTIVE_MODES: 'MODE_ENGINE_V2_REAPPLY_ACTIVE_MODES',
   CONTENT_SCRIPT_READY_V2: 'CONTENT_SCRIPT_READY_V2',
   MODE_ENGINE_V2_APPLY_RESULT: 'MODE_ENGINE_V2_APPLY_RESULT',
+  DARK_COMFORT_FRAME_READY: 'DARK_COMFORT_FRAME_READY',
   MODE_ENGINE_V2_APPLY_SCOPE_TOKENS: 'MODE_ENGINE_V2_APPLY_SCOPE_TOKENS',
   MODE_ENGINE_V2_CLEANUP_SCOPE_TOKENS: 'MODE_ENGINE_V2_CLEANUP_SCOPE_TOKENS',
+  GET_DOCUMENT_CONTEXT_V1: 'GET_DOCUMENT_CONTEXT_V1',
+  TEST_LIFECYCLE_ARM_PAUSE_V1: 'TEST_LIFECYCLE_ARM_PAUSE_V1',
+  TEST_LIFECYCLE_GET_PAUSE_V1: 'TEST_LIFECYCLE_GET_PAUSE_V1',
   MODE_ENGINE_V2_SET_SCOPE_ROOT: 'MODE_ENGINE_V2_SET_SCOPE_ROOT',
   MODE_ENGINE_V2_VERIFY_SCOPE_ROOT: 'MODE_ENGINE_V2_VERIFY_SCOPE_ROOT',
   MODE_ENGINE_V2_SALVAGE_SCOPE_ROOT: 'MODE_ENGINE_V2_SALVAGE_SCOPE_ROOT',
   MODE_ENGINE_V2_MEASURE_CONTRAST: 'MODE_ENGINE_V2_MEASURE_CONTRAST',
   MODE_ENGINE_V2_CONTRAST_REPORT: 'MODE_ENGINE_V2_CONTRAST_REPORT',
+  PAGE_SIGNALS_COLLECT_V1: 'PAGE_SIGNALS_COLLECT_V1',
+  REGION_TARGET_VALIDATE_V1: 'REGION_TARGET_VALIDATE_V1',
+  PAGE_CLARITY_MARK_TARGET_V1: 'PAGE_CLARITY_MARK_TARGET_V1',
+  PAGE_CLARITY_EFFECT_BASELINE_V1: 'PAGE_CLARITY_EFFECT_BASELINE_V1',
+  PAGE_CLARITY_EFFECT_PROBE_V1: 'PAGE_CLARITY_EFFECT_PROBE_V1',
+  PAGE_CLARITY_CLEAR_TARGETS_V1: 'PAGE_CLARITY_CLEAR_TARGETS_V1',
   TEST_PING_CONTENT: 'TEST_PING_CONTENT',
   TEST_INJECT_SUGGESTION_BANNER: 'TEST_INJECT_SUGGESTION_BANNER',
   TEST_CLEAR_SUGGESTION_BANNER: 'TEST_CLEAR_SUGGESTION_BANNER',
   GET_SITE_POLICY: 'GET_SITE_POLICY',
   SET_SITE_OVERRIDE: 'SET_SITE_OVERRIDE',
-  CLEAR_SITE_FAILURES_FOR_HOST: 'CLEAR_SITE_FAILURES_FOR_HOST'
+  CLEAR_SITE_FAILURES_FOR_HOST: 'CLEAR_SITE_FAILURES_FOR_HOST',
+  GET_LEGACY_DOMAIN_MIGRATION: 'GET_LEGACY_DOMAIN_MIGRATION',
+  CONFIRM_LEGACY_DOMAIN_MIGRATION: 'CONFIRM_LEGACY_DOMAIN_MIGRATION'
 };
 
 // ========== SMARTSCOPE ACTIONS (Versionnées) ==========
@@ -151,12 +189,56 @@ export const SMARTSCOPE_ACTIONS = {
   APPLY_TARGETED_HIDING: 'SMARTSCOPE_APPLY_TARGETED_HIDING_V1'
 };
 
+export const CONTENT_ROUTE_OWNERSHIP = Object.freeze({
+  TOP_FRAME_ONLY: 'TOP_FRAME_ONLY',
+  FRAME_TARGETED: 'FRAME_TARGETED',
+  FRAME_SAFE: 'FRAME_SAFE',
+  TEST_ONLY: 'TEST_ONLY',
+});
+
+const contentRoute = (owner, ownership, response, effect, identity = 'SUPPLIED_STRICT') => Object.freeze({
+  owner,
+  ownership,
+  response,
+  effect,
+  identity,
+});
+
+// Exhaustive contract for the content-main switch. It is serialized through
+// the shared-constants bridge so MV3 runtime code and Node tests share one
+// ownership policy.
+export const CONTENT_MESSAGE_ROUTES_V1 = Object.freeze({
+  [SMARTSCOPE_ACTIONS.APPLY_CLASSES]: contentRoute('smartscope-classes', 'FRAME_TARGETED', 'sync', 'DOM'),
+  [SMARTSCOPE_ACTIONS.REMOVE_TOKEN]: contentRoute('smartscope-classes', 'FRAME_TARGETED', 'sync', 'DOM'),
+  [ACTIONS.PAGE_SIGNALS_COLLECT_V1]: contentRoute('page-signals', 'FRAME_TARGETED', 'sync', 'READ'),
+  [ACTIONS.REGION_TARGET_VALIDATE_V1]: contentRoute('page-signals', 'FRAME_TARGETED', 'sync', 'READ'),
+  [ACTIONS.PAGE_CLARITY_MARK_TARGET_V1]: contentRoute('page-clarity', 'FRAME_TARGETED', 'sync', 'DOM'),
+  [ACTIONS.PAGE_CLARITY_EFFECT_BASELINE_V1]: contentRoute('page-clarity', 'FRAME_TARGETED', 'sync', 'READ'),
+  [ACTIONS.PAGE_CLARITY_EFFECT_PROBE_V1]: contentRoute('page-clarity', 'FRAME_TARGETED', 'sync', 'READ'),
+  [ACTIONS.PAGE_CLARITY_CLEAR_TARGETS_V1]: contentRoute('page-clarity', 'FRAME_TARGETED', 'sync', 'DOM'),
+  [SMARTSCOPE_ACTIONS.GET_PROFILE]: contentRoute('smartscope-profile', 'FRAME_TARGETED', 'async', 'READ'),
+  [ACTIONS.SMARTSCOPE_VERIFY_COMPUTED_STYLES_V1]: contentRoute('smartscope-verifier', 'FRAME_TARGETED', 'sync', 'READ'),
+  [ACTIONS.MODE_ENGINE_V2_APPLY_SCOPE_TOKENS]: contentRoute('modeengine-scoped-v2', 'FRAME_TARGETED', 'async', 'DOM'),
+  [ACTIONS.MODE_ENGINE_V2_CLEANUP_SCOPE_TOKENS]: contentRoute('modeengine-scoped-v2', 'FRAME_TARGETED', 'async', 'DOM'),
+  [ACTIONS.MODE_ENGINE_V2_SET_SCOPE_ROOT]: contentRoute('modeengine-scoped-v2', 'FRAME_TARGETED', 'async', 'DOM'),
+  [ACTIONS.MODE_ENGINE_V2_VERIFY_SCOPE_ROOT]: contentRoute('modeengine-scoped-v2', 'FRAME_TARGETED', 'async', 'READ'),
+  [ACTIONS.MODE_ENGINE_V2_SALVAGE_SCOPE_ROOT]: contentRoute('modeengine-scoped-v2', 'FRAME_TARGETED', 'async', 'DOM'),
+  [ACTIONS.MODE_ENGINE_V2_MEASURE_CONTRAST]: contentRoute('modeengine-contrast', 'FRAME_TARGETED', 'sync', 'READ'),
+  [ACTIONS.SHOW_BANNER]: contentRoute('suggestion-banner', 'TOP_FRAME_ONLY', 'async', 'UI'),
+  [ACTIONS.TEST_PING_CONTENT]: contentRoute('content-readiness', 'FRAME_SAFE', 'sync', 'READ', 'NONE'),
+  [ACTIONS.TEST_INJECT_SUGGESTION_BANNER]: contentRoute('suggestion-banner-test', 'TEST_ONLY', 'sync', 'UI'),
+  [ACTIONS.TEST_CLEAR_SUGGESTION_BANNER]: contentRoute('suggestion-banner-test', 'TEST_ONLY', 'sync', 'UI'),
+  [ACTIONS.INJECT_RESTORE_BUTTON]: contentRoute('restore-button', 'TOP_FRAME_ONLY', 'sync', 'UI'),
+  [ACTIONS.REMOVE_RESTORE_BUTTON]: contentRoute('restore-button', 'TOP_FRAME_ONLY', 'sync', 'UI'),
+  [ACTIONS.PREFS_UPDATED]: contentRoute('focus-preferences', 'TOP_FRAME_ONLY', 'sync', 'RUNTIME_STATE'),
+  [ACTIONS.MODE_ENGINE_V2_APPLY_RESULT]: contentRoute('modeengine-result', 'FRAME_TARGETED', 'sync', 'RUNTIME_STATE'),
+});
+
 // ========== MODE PREFS (SUB-FEATURE DEFAULTS) ==========
 export const MODE_PREF_KEYS = {
   [MODE_IDS.COMFORT_VISUAL]: Object.freeze(['darkMode', 'contrastGuard', 'reduceMotion', 'readingRuler']),
   [MODE_IDS.FOCUS]: Object.freeze([
     'distractionDim',
-    'ultraFocus',
     'targetBoost',
     'reduceMotion',
     'readingRuler',
@@ -166,14 +248,13 @@ export const MODE_PREF_KEYS = {
 
 export const MODE_PREFS_DEFAULTS = {
   [MODE_IDS.COMFORT_VISUAL]: {
-    darkMode: false,
+    darkMode: getDefaultComfortVisualPrefs().darkMode,
     contrastGuard: false,
     reduceMotion: false,
     readingRuler: false,
   },
   [MODE_IDS.FOCUS]: {
     distractionDim: false,
-    ultraFocus: false,
     targetBoost: false,
     reduceMotion: false,
     readingRuler: false,
@@ -194,6 +275,9 @@ export const STORAGE_KEYS = {
   FEATURE_FLAGS: 'featureFlags',
   SITE_FAILURES_V1: 'siteFailuresV1',
   SITE_OVERRIDES_V1: 'siteOverridesV1',
+  SITE_PROFILES: 'siteProfiles',
+  TEMPLATE_MEMORY_V1: 'templateMemoryV1',
+  TEMPLATE_MEMORY_SECRET_V1: 'templateMemorySecretV1',
 
   // chrome.storage.session (runtime - Roadmap v5.2 schema)
   TAB_STATE: 'tabState',
@@ -204,7 +288,14 @@ export const STORAGE_KEYS = {
   PENDING_POPUP: 'pendingPopup', // POPUP_READY pattern (MV3 resilience)
   CSS_REGISTRY: 'cssRegistry',
   SMARTSCOPE_STATUS: 'smartScopeStatus',
-  RUNTIME_STATE: 'runtimeState'
+  RUNTIME_STATE: 'runtimeState',
+  SIGNAL_SNAPSHOTS: 'signalSnapshots',
+  POLICY_STATE: 'policyState',
+  OUTCOME_LEDGER_V1: 'outcomeLedgerV1',
+  SHADOW_REPLAY_LEDGER_V1: 'shadowReplayLedgerV1',
+  DEBUG_SIGNAL_EVENTS: 'debugSignalEvents',
+  DEBUG_DECISION_EVENTS: 'debugDecisionEvents',
+  LIFECYCLE_JOURNAL_V1: 'lifecycleJournalV1'
 };
 
 // ========== SITE POLICY BLOCK REASONS ==========

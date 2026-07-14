@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import {
   computeFocusRect,
   createFocusOverlayControllerV2,
@@ -17,8 +18,10 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = resolve(__dirname, 'fixtures', 'dom');
+const contentRuntimePath = resolve(__dirname, '../content/focus-overlay-v2.runtime.js');
 const contentFixtureHtml = readFileSync(resolve(fixturesDir, 'content.html'), 'utf8');
 const modalFixtureHtml = readFileSync(resolve(fixturesDir, 'modal.html'), 'utf8');
+const contentRuntimeSource = readFileSync(contentRuntimePath, 'utf8');
 
 class FakeElement {
   constructor(tagName = 'DIV') {
@@ -223,6 +226,28 @@ test('createFocusOverlayV2 reuses a single root and keeps html/body untouched', 
     assert.equal(panel.style.pointerEvents, 'none');
     assert.equal(panel.style.position, 'fixed');
   });
+});
+
+test('content Focus overlay runtime ignores pointer blocking requests', () => {
+  const { document } = buildEnv({ viewport: { w: 800, h: 600 } });
+  const sandbox = {
+    console,
+    document,
+    setTimeout,
+    clearTimeout,
+    addEventListener() {},
+  };
+  sandbox.globalThis = sandbox;
+  runInNewContext(contentRuntimeSource, sandbox);
+
+  const handle = sandbox.AURA_FOCUS_OVERLAY_V2.createFocusOverlayV2(document, {
+    pointerBlockOutside: true,
+  });
+
+  assert.equal(handle.pointerBlockOutside, false);
+  assert.equal(handle.blockers, null);
+  assert.equal(handle.root.style.pointerEvents, 'none');
+  assert.equal(document.querySelector('[data-aura-focus-overlay-blocker]'), null);
 });
 
 test('updateFocusOverlayV2 positions panels with non-negative geometry', () => {

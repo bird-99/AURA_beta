@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker", "WebWorker.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "force",
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "maxNodeModuleJsDepth": 0,
+    "types": ["chrome"]
+  },
+  "files": [
+    "background/apply-failure-reasons.js",
+    "background/global-safe-fallback-policy.js",
+    "background/css-guardrails.js",
+    "background/scope-cache.js",
+    "background/rehydrate-result-observer.js",
+    "background/tab-lifecycle-coordinator.js",
+    "background/rehydrate-tab-events.js",
+    "background/legacy-domain-migration.js",
+    "background/site-profile-store.js",
+    "background/lifecycle-operation-journal.js",
+    "background/shared-constants-bridge.js",
+    "background/css-registry.js",
+    "background/feature-flags-bridge.js",
+    "background/runtime-state.js",
+    "background/debug-snapshot.js",
+    "background/policy-engine.js",
+    "background/signals/signal-broker.js",
+    "background/telemetry.js",
+    "background/state-manager.js",
+    "background/badge-manager.js",
+    "background/spa-detector.js"
+  ]
+}

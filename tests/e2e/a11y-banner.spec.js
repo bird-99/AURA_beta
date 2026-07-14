@@ -1,17 +1,31 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { expectNoSeriousA11yViolations } from './axe-helpers.js';
-import { launchWithExtension, waitForExtensionReady } from './helpers/launch-with-extension.js';
+import {
+  launchWithExtension,
+  showSuggestionBanner,
+  waitForAuraContentReady,
+  waitForAuraReady,
+} from './helpers/launch-with-extension.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const extensionPath = path.resolve(__dirname, '../../');
+const fixturePath = path.resolve(__dirname, '../fixtures/basic.html');
+const targetUrl = 'http://aura.local/basic.html';
+
+async function loadFixtureHtml() {
+  return fs.readFile(fixturePath, 'utf8');
+}
 
 test.describe('Suggestion banner accessibility', () => {
   let context;
   let serviceWorker;
+  let fixtureHtml;
 
   test.beforeAll(async () => {
+    fixtureHtml = await loadFixtureHtml();
     ({ context } = await launchWithExtension({
       extensionPath,
       headless: true,
@@ -27,57 +41,41 @@ test.describe('Suggestion banner accessibility', () => {
 
   test('has no serious accessibility violations', async () => {
     const page = await context.newPage();
-    await page.goto('https://example.com/');
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForFunction(
-      () => document.documentElement.dataset.auraReady === '1',
-      null,
-      { timeout: 10000 },
-    );
-    await waitForExtensionReady(serviceWorker, page);
-
-    const targetPattern = `*://${new URL(page.url()).host}/*`;
-
-    const injectResponse = await serviceWorker.evaluate(async (payload) => {
-      try {
-        return await chrome.runtime.sendMessage(payload);
-      } catch (error) {
-        return { ok: false, error: { message: error?.message || 'send failed' } };
+    await page.route('http://aura.local/**', async (route) => {
+      if (route.request().url() === targetUrl) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/html',
+          body: fixtureHtml,
+        });
+        return;
       }
-    }, {
-      action: 'TEST_INJECT_SUGGESTION_BANNER',
-      type: 'TEST_INJECT_SUGGESTION_BANNER',
-      targetUrl: page.url(),
-      targetPattern,
+
+      await route.fulfill({ status: 404, body: '' });
+    });
+
+    await page.goto(targetUrl);
+    await page.waitForLoadState('domcontentloaded');
+    await waitForAuraContentReady(page);
+    await waitForAuraReady(serviceWorker, page);
+
+    const injectResponse = await showSuggestionBanner(serviceWorker, page, {
       modeId: 'comfort-visual',
-      confidence: 0.75,
-      signals: [],
+      score: 0.75,
     });
 
     if (!injectResponse?.ok) {
       // Surfacing failure details helps CI logs without affecting runtime behaviour
-      console.error('Banner inject error (TEST):', injectResponse);
+      console.error('Banner inject error:', injectResponse);
     }
 
     expect(injectResponse?.ok).toBeTruthy();
 
-    const tabId = injectResponse?.tabId;
-    expect(tabId).toBeDefined();
-
-    await page.waitForSelector('[role="status"][aria-live="polite"]');
+    await page.waitForSelector('#aura-suggestion-banner[role="status"][aria-live="polite"]', {
+      state: 'attached',
+    });
 
     await expectNoSeriousA11yViolations(page);
-
-    await serviceWorker.evaluate(async (payload) => {
-      try {
-        return await chrome.runtime.sendMessage(payload);
-      } catch (error) {
-        return { ok: false, error: { message: error?.message || 'send failed' } };
-      }
-    }, {
-      action: 'TEST_CLEAR_SUGGESTION_BANNER',
-      tabId,
-    });
 
     await page.close();
   });

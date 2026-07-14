@@ -1,0 +1,137 @@
+{
+  "name": "unknown-shell-nomodal",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_unknown_shell_nomodal_v1",
+    "routeEpoch": "aura_pse_route_unknown_shell_nomodal_v1",
+    "viewport": {
+      "w": 1280,
+      "h": 720
+    },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 0,
+      "formCount": 0,
+      "tableCount": 0,
+      "mediaCount": 1,
+      "fixedOrStickyCount": 1,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.3,
+      "linkDensity": 0.22,
+      "interactiveDensity": 0.32,
+      "mediaDensity": 0.12,
+      "formDensity": 0.06,
+      "tableDensity": 0.04,
+      "viewportCoverage": 0.74
+    },
+    "blocks": [
+      {
+        "blockId": "b_unknown_shell_nomodal",
+        "roleHint": "UNKNOWN",
+        "rectRatio": {
+          "xRatio": 0.04,
+          "yRatio": 0.04,
+          "widthRatio": 0.92,
+          "heightRatio": 0.86,
+          "visibleRatio": 0.84
+        },
+        "metrics": {
+          "textDensity": 0.28,
+          "linkDensity": 0.2,
+          "interactiveDensity": 0.34,
+          "mediaDensity": 0.12,
+          "formDensity": 0.06,
+          "tableDensity": 0.04,
+          "viewportCoverage": 0.72
+        },
+        "flags": [
+          "UNKNOWN_LOW_CONFIDENCE",
+          "TOP_CANDIDATES_AMBIGUOUS"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 10,
+      "nodesScanned": 860,
+      "candidatesSeen": 17,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 17,
+        "nodesSampled": 860,
+        "elapsedMs": 10,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_unknown_shell_nomodal",
+          "rectBuckets": {
+            "x": 0,
+            "y": 0,
+            "w": 9,
+            "h": 9
+          },
+          "visibleAreaBucket": 7,
+          "viewportIntersectionBucket": 8,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": false,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 1,
+          "linkDensityBucket": 2,
+          "mediaControlSeparationHint": false,
+          "headingHint": false,
+          "listHint": false,
+          "cardHint": false,
+          "centralityBucket": 10
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "UNKNOWN",
+    "minConfidence": 0,
+    "maxConfidence": 0.5,
+    "selectedScopeBlockId": null,
+    "allowedActions": [],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "FOCUS_VISIBILITY",
+      "REDUCE_MOTION",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "UNKNOWN_LOW_CONFIDENCE",
+      "TOP_CANDIDATES_AMBIGUOUS"
+    ],
+    "requiredProblems": [
+      "LOW_CONFIDENCE_PAGE_TYPE"
+    ],
+    "forbiddenProblems": [
+      "HIGH_LAYOUT_RISK",
+      "HIGH_INTERACTION_RISK",
+      "MODAL_OVERLAY_PRESENT"
+    ],
+    "riskBands": {
+      "layoutRisk": "MEDIUM",
+      "interactionRisk": "MEDIUM"
+    }
+  }
+}

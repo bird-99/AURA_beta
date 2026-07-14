@@ -19,7 +19,7 @@ test('Scoped typography keeps generous line-height floor', () => {
 
 test('Dark mode colors remain scoped', () => {
   const css = buildSmartScopePatchCSS(MODE_IDS.FOCUS, 1, 'SCOPED');
-  assert(css.includes('@media (prefers-color-scheme: dark) { .aura-scope'), 'Dark mode should be scoped to aura root');
+  assert(css.includes('.aura-scope { color-scheme: dark'), 'Dark mode should be scoped to aura root');
   assert(!/body\s*\{[^}]*background-color/i.test(css), 'Scoped dark mode should not override body background');
 });
 

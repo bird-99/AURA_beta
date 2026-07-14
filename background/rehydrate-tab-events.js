@@ -1,6 +1,20 @@
 import { MODE_IDS } from '../shared/constants.js';
 
-export function createTabRehydrateHandlers({
+/**
+ * @typedef {object} TabRehydrateDependencies
+ * @property {{ applyPreludeCss?: (tabId: number, reason: string) => Promise<unknown> }} [cssApplier]
+ * @property {{ getTabState: (tabId: number) => Promise<object | null>, isModeActive: (tabId: number, modeId: string) => Promise<boolean>, isModeBlocked: (tabId: number, modeId: string) => Promise<boolean> }} [stateManager]
+ * @property {(tabId: number, reason: string, context?: { url?: string }) => Promise<unknown>} [rehydrateActiveModesForTab]
+ * @property {(url: string) => boolean} [isUnsupportedScheme]
+ * @property {(tabId: unknown) => boolean} [isValidTabId]
+ * @property {(context: { tabId: number, url: string, tab?: object }) => Promise<unknown>} [onTabReady]
+ * @property {{ ACTIVE?: string }} [states]
+ * @property {{ get?: (tabId: number) => Promise<{ url?: string }> }} [tabsApi]
+ */
+
+/** @param {TabRehydrateDependencies} [dependencies] */
+export function createTabRehydrateHandlers(dependencies = {}) {
+  const {
   cssApplier,
   stateManager,
   rehydrateActiveModesForTab,
@@ -9,7 +23,7 @@ export function createTabRehydrateHandlers({
   onTabReady,
   states,
   tabsApi,
-} = {}) {
+  } = dependencies;
   function isSupportedUrl(url) {
     if (typeof url !== 'string') {
       return false;
@@ -92,7 +106,7 @@ export function createTabRehydrateHandlers({
     }
 
     if (await shouldRehydrateTab(tabId)) {
-      await rehydrateActiveModesForTab(tabId, 'tab-complete');
+      await rehydrateActiveModesForTab(tabId, 'tab-complete', { url });
       return;
     }
 

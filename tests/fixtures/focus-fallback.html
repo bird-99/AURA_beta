@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AURA Focus Fallback Fixture</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 32px;
+      }
+
+      .shell {
+        display: grid;
+        gap: 12px;
+      }
+
+      a {
+        text-decoration-line: none;
+      }
+
+      a:focus,
+      .control-like:focus {
+        outline-style: none;
+      }
+
+      .controls {
+        display: grid;
+        gap: 10px;
+        max-width: 320px;
+      }
+
+      .control-like {
+        border: 1px solid rgb(118, 118, 118);
+        padding: 8px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <h1>Navigation Shell</h1>
+      <a id="primary-link" href="#alpha">Alpha destination</a>
+      <a href="#beta">Beta destination</a>
+      <a href="#gamma">Gamma destination</a>
+      <a href="#delta">Delta destination</a>
+      <a href="#epsilon">Epsilon destination</a>
+      <a href="#zeta">Zeta destination</a>
+      <a href="#eta">Eta destination</a>
+      <a href="#theta">Theta destination</a>
+      <div class="controls">
+        <span id="primary-widget" class="control-like" role="button" tabindex="0">Primary action</span>
+      </div>
+    </div>
+  </body>
+</html>

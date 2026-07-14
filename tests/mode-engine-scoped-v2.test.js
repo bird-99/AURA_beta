@@ -190,6 +190,19 @@ test('cleanupScopedTokens removes owned tokens and attributes', () => {
   assert.equal(el.style.get('--aura-font-size'), undefined);
 });
 
+test('cleanupScopedTokens removes token attribute when explicit owned keys are provided', () => {
+  const el = new MockElement();
+  applyScopedTokens(el, buildTokenSet(), 'owner-1');
+
+  const cleanup = cleanupScopedTokens(el, 'owner-1', ['--aura-font-size']);
+
+  assert.equal(cleanup.ok, true);
+  assert.equal(el.getAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR), null);
+  assert.equal(el.getAttribute(MODE_ENGINE_SCOPE_ATTR), null);
+  assert.equal(el.getAttribute(MODE_ENGINE_SCOPE_OWNER_ATTR), null);
+  assert.equal(el.style.get('--aura-font-size'), undefined);
+});
+
 test('cleanupScopedTokens preserves scope attr when owner does not match', () => {
   const el = new MockElement();
   applyScopedTokens(el, buildTokenSet(), 'owner-1');
@@ -426,7 +439,10 @@ test('buildScopedModeCssV2 omits root selectors and keeps scoped fallbacks', () 
 
   assert(!/:root\b/i.test(css));
   assert(!/\bhtml\b/i.test(css));
-  assert(!/\bbody\b/i.test(css));
+  const cssWithoutBodyCustomNames = css
+    .replace(/::part\(body\)/gi, '::part(componentBodyPart)')
+    .replace(/--[\w-]*body[\w-]*/gi, '--custom-property');
+  assert(!/\bbody\b/i.test(cssWithoutBodyCustomNames));
   assert(css.includes('--aura-font-size'));
   assert(Object.keys(tokens).includes('--aura-letter-spacing'));
   assert(css.includes('letter-spacing: var(--aura-letter-spacing'));
@@ -434,19 +450,232 @@ test('buildScopedModeCssV2 omits root selectors and keeps scoped fallbacks', () 
   assert(css.includes('word-spacing: 0.02em'));
   assert(css.includes('text-rendering: optimizeLegibility'));
   assert(css.includes('font-kerning: normal'));
+  assert(css.includes('color: var(--aura-text-color) !important'));
+  assert.match(
+    css,
+    /:where\(p, li, blockquote, dd, dt, span, em, strong, small, th, td, label, legend, caption, figcaption\)\s*\{[^}]*-webkit-text-fill-color:\s*var\(--aura-text-color\)\s*!important;/,
+  );
   assert(css.includes('overflow-wrap: var(--aura-overflow-wrap'));
   assert(css.includes('word-break: var(--aura-word-break'));
   assert(css.includes('hyphens: var(--aura-hyphens'));
+  assert.match(css, /:where\(p, blockquote, dd, dt\)\s*\{[^}]*overflow-wrap: var\(--aura-overflow-wrap/);
+  assert.match(css, /:where\(pre, code, kbd, samp\)\s*\{[^}]*overflow-wrap: normal/);
+  assert.doesNotMatch(css, /:is\(p, li, blockquote, pre, code, dd, dt\)\s*\{[^}]*overflow-wrap/);
   assert(css.includes('text-decoration-thickness: var(--aura-link-decoration-thickness'));
   assert(css.includes('text-underline-offset: var(--aura-link-decoration-offset'));
   assert(css.includes(':visited { color:'));
+});
+
+test('buildScopedModeCssV2 includes bounded dark part selectors for web components', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 1 });
+
+  assert.match(css, /color-scheme:\s*var\(--aura-color-scheme\)\s*!important/);
+  assert(css.includes(`${MODE_ENGINE_SCOPE_SELECTOR}[data-aura-scope-tokens*="--aura-color-scheme"] :where(*)::part(surface)`));
+  assert(css.includes('::part(panel)'));
+  assert(css.includes('::part(heading)'));
+  assert(css.includes('::part(button)'));
+  assert(css.includes('::part(input)'));
+  assert(css.includes('accent-color: var(--aura-focus-color)'));
+  assert(!css.includes('::part(*)'));
+  assert.match(
+    css,
+    /::part\(surface\)[^{]+\{[^}]*background-color:\s*var\(--aura-surface-1\)\s*!important;/,
+  );
+  assert.match(
+    css,
+    /::part\(button\)[^{]+\{[^}]*background-color:\s*var\(--aura-surface-2\)\s*!important;[^}]*accent-color:\s*var\(--aura-focus-color\)/,
+  );
+});
+
+test('buildScopedModeCssV2 preserves format-sensitive tokens and maps framework-specific colors', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 1 });
+
+  assert.doesNotMatch(css, /--background\s*:/);
+  assert.doesNotMatch(css, /--foreground\s*:/);
+  assert.doesNotMatch(css, /--card\s*:/);
+  assert.doesNotMatch(css, /--border\s*:/);
+  assert.doesNotMatch(css, /--color-link\s*:/);
+  assert.match(css, /--bs-body-bg:\s*var\(--aura-bg-color\)\s*!important/);
+  assert.match(css, /--bs-body-color:\s*var\(--aura-text-color\)\s*!important/);
+  assert.match(css, /--mui-palette-background-paper:\s*var\(--aura-surface-1\)\s*!important/);
+  assert.match(css, /--mui-palette-text-primary:\s*var\(--aura-text-color\)\s*!important/);
+  assert.match(css, /--ant-color-bg-container:\s*var\(--aura-surface-1\)\s*!important/);
+  assert.match(css, /--ant-color-text:\s*var\(--aura-text-color\)\s*!important/);
+  assert.match(css, /--chakra-colors-chakra-body-bg:\s*var\(--aura-bg-color\)\s*!important/);
+  assert.match(css, /--chakra-colors-fg:\s*var\(--aura-text-color\)\s*!important/);
+  assert.match(css, /--md-sys-color-surface:\s*var\(--aura-surface-1\)\s*!important/);
+  assert.match(css, /--bgColor-default:\s*var\(--aura-bg-color\)\s*!important/);
+  assert.match(css, /\[data-aura-scope="1"\]\[data-aura-scope-tokens\*="--aura-color-scheme"\] :where\(dialog, \[popover\]/);
+  assert.match(css, /\[class\*="card" i\]/);
+  assert.match(css, /\[data-bs-theme\]/);
+  assert.doesNotMatch(css, /--site-private-theme-color/);
+});
+
+test('buildScopedModeCssV2 darkens top-layer and portal overlay surfaces', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 1 });
+
+  assert.match(css, /\[popover\]/);
+  assert.match(css, /\[aria-modal="true"\]/);
+  assert.match(css, /\[data-radix-popper-content-wrapper\]/);
+  assert.match(css, /\[data-headlessui-portal\]/);
+  assert.match(css, /\[data-floating-ui-portal\]/);
+  assert.match(css, /\[class\*="tooltip" i\]/);
+  assert.match(css, /\[class\*="overlay" i\]/);
+  assert.match(css, /\[class\*="portal" i\]/);
+  assert.match(css, /\[role="tooltip"\]/);
+  assert.match(css, /\[role="tree"\]/);
+  assert.match(css, /\[role="tablist"\]/);
+  assert.match(
+    css,
+    /\[data-aura-scope="1"\]\[data-aura-scope-tokens\*="--aura-color-scheme"\]\s+:where\(dialog, \[popover\][^{]+\{[^}]*background-color:\s*var\(--aura-surface-1\)\s*!important;[^}]*box-shadow:\s*0 12px 32px rgba\(0, 0, 0, 0\.35\)\s*!important;/,
+  );
+  assert.match(
+    css,
+    /\[data-aura-scope="1"\]\[data-aura-scope-tokens\*="--aura-color-scheme"\]\s+:where\(dialog, \[popover\][^{]+:where\(a, \[role="link"\], button/,
+  );
+  assert.doesNotMatch(css, /\bbody\s+:where\(dialog, \[popover\]/);
+  assert.doesNotMatch(css, /\bhtml\s+:where\(dialog, \[popover\]/);
+});
+
+test('buildScopedModeCssV2 darkens tagged app shell surfaces without global selectors', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 1 });
+
+  assert.match(css, /\[data-aura-surface-kind="app-shell"\]\s*\{[^}]*background-color:\s*var\(--aura-surface-2\)\s*!important/);
+  assert.match(css, /\[data-aura-surface-kind="app-shell"\]\s*\{[^}]*box-shadow:\s*0 1px 0 var\(--aura-border-color\)\s*!important/);
+  assert.match(css, /\[data-aura-surface-kind="app-shell"\]\s*:where\(a, \[role="link"\], button/);
+  assert.doesNotMatch(css, /\bbody\s+\[data-aura-surface-kind="app-shell"\]/);
+  assert.doesNotMatch(css, /\bhtml\s+\[data-aura-surface-kind="app-shell"\]/);
 });
 
 test('buildScopedModeCssV2 keeps heading text fill color for readability', () => {
   const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 0.6 });
 
   assert(css.includes(':where(h1, h2, h3, h4, h5, h6, [role="heading"])'));
-  assert(css.includes('-webkit-text-fill-color: currentColor'));
+  assert(css.includes('color: var(--aura-text-color) !important'));
+  assert(css.includes('-webkit-text-fill-color: var(--aura-text-color) !important'));
+});
+
+test('buildScopedModeCssV2 force-text rules override webkit text fill color', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 0.6 });
+
+  assert.match(
+    css,
+    /\[data-aura-force-text="1"\]\s*\{\s*color:\s*var\(--aura-text-color\)\s*!important;\s*-webkit-text-fill-color:\s*var\(--aura-text-color\)\s*!important;/,
+  );
+  assert.match(
+    css,
+    /\[data-aura-force-text="1"\]\s*:where\([^)]*\)\s*\{\s*color:\s*var\(--aura-text-color\)\s*!important;\s*-webkit-text-fill-color:\s*var\(--aura-text-color\)\s*!important;/,
+  );
+});
+
+test('buildScopedModeCssV2 form controls override webkit text fill color', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 0.6 });
+
+  assert.match(
+    css,
+    /:where\(input, textarea, select, button\)\s*\{[^}]*color:\s*var\(--aura-text-color\)\s*!important;\s*-webkit-text-fill-color:\s*var\(--aura-text-color\)\s*!important;[^}]*border-color:\s*var\(--aura-border-color\)\s*!important;/,
+  );
+});
+
+test('buildScopedModeCssV2 dark token scopes cover complex wiki article surfaces', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 0.6 });
+
+  assert.match(css, /\[data-aura-scope-tokens\*="--aura-color-scheme"\]/);
+  assert.match(css, /\[class\*="mw-" i\]/);
+  assert.match(css, /\[class\*="vector-" i\]/);
+  assert.match(css, /\[class\*="infobox" i\]/);
+  assert.match(css, /\[id\*="wiki" i\]/);
+  assert.match(css, /\[id\*="infobox" i\]/);
+  assert.match(css, /\[data-aura-scope-tokens\*="--aura-color-scheme"\]\s*\{[^}]*background-color:\s*var\(--aura-bg-color\)\s*!important/);
+  assert.match(css, /:is\(\[class\*="mw-" i\]/);
+  assert.match(css, /background-image:\s*none\s*!important/);
+  assert.doesNotMatch(css, /\[data-aura-scope="1"\]\s+\*\s*\{[^}]*background-image:\s*none\s*!important/);
+});
+
+test('buildScopedModeCssV2 dark token scopes cover targeted pseudo surfaces', () => {
+  const css = buildScopedModeCssV2({ modeId: MODE_IDS.COMFORT_VISUAL, intensity: 0.6 });
+
+  assert.match(css, /\[data-aura-scope-tokens\*="--aura-color-scheme"\]\s+:where\([^)]*\[data-callout\][^)]*\)::before/);
+  assert.match(css, /\[data-aura-scope-tokens\*="--aura-color-scheme"\]\s+:where\([^)]*\[class\*="card" i\][^)]*\)::after/);
+  assert.match(
+    css,
+    /::before,\s*\[data-aura-scope="1"\]\[data-aura-scope-tokens\*="--aura-color-scheme"\]\s+:where\([^)]*\)::after\s*\{[^}]*background-color:\s*var\(--aura-surface-1\)\s*!important;[^}]*background-image:\s*none\s*!important;[^}]*-webkit-text-fill-color:\s*var\(--aura-text-color\)\s*!important;[^}]*border-color:\s*var\(--aura-border-color\)\s*!important;/,
+  );
+  assert.doesNotMatch(css, /\[data-aura-scope="1"\]\s+:where\(\*, \*::before, \*::after\)\s*\{[^}]*background-color:\s*var\(--aura-surface-1\)\s*!important/);
+});
+
+test('buildScopedModeCssV2 can omit link rules so site-native link styles win', () => {
+  const nativeLinks = buildScopedModeCssV2({
+    modeId: MODE_IDS.COMFORT_VISUAL,
+    intensity: 0.6,
+    linkEnhanceEnabled: false,
+    linkColorEnabled: false,
+  });
+  const colorOnly = buildScopedModeCssV2({
+    modeId: MODE_IDS.COMFORT_VISUAL,
+    intensity: 0.6,
+    linkEnhanceEnabled: false,
+    linkColorEnabled: true,
+  });
+
+  assert.doesNotMatch(nativeLinks, /--aura-link-decoration/);
+  assert.doesNotMatch(nativeLinks, /:is\(a, \[role="link"\]\)\s*\{[^}]*--aura-link-color/);
+  assert.match(colorOnly, /color: var\(--aura-link-color\)/);
+  assert.match(colorOnly, /-webkit-text-fill-color: var\(--aura-link-color\)/);
+  assert.doesNotMatch(colorOnly, /text-decoration-line: var\(--aura-link-decoration/);
+});
+
+test('buildScopedModeCssV2 omits comfort font-size rules when text scale is disabled', () => {
+  const css = buildScopedModeCssV2({
+    modeId: MODE_IDS.COMFORT_VISUAL,
+    intensity: 0.6,
+    textScaleEnabled: false,
+  });
+
+  assert.doesNotMatch(css, /font-size:\s*var\(--aura-font-size/);
+  assert.match(css, /line-height: var\(--aura-line-height/);
+});
+
+test('buildScopedModeCssV2 omits comfort text rendering refinement rules when disabled', () => {
+  const css = buildScopedModeCssV2({
+    modeId: MODE_IDS.COMFORT_VISUAL,
+    intensity: 0.6,
+    typoSmoothingEnabled: false,
+  });
+  const focusCss = buildScopedModeCssV2({
+    modeId: MODE_IDS.FOCUS,
+    intensity: 0.6,
+    typoSmoothingEnabled: false,
+  });
+
+  assert.doesNotMatch(css, /-webkit-font-smoothing/);
+  assert.doesNotMatch(css, /letter-spacing: var\(--aura-letter-spacing/);
+  assert.doesNotMatch(css, /word-spacing:\s*0\.02em/);
+  assert.doesNotMatch(css, /text-rendering:\s*optimizeLegibility/);
+  assert.doesNotMatch(css, /font-kerning:\s*normal/);
+  assert.match(focusCss, /letter-spacing: var\(--aura-letter-spacing/);
+  assert.doesNotMatch(focusCss, /-webkit-font-smoothing/);
+  assert.doesNotMatch(focusCss, /text-rendering:\s*optimizeLegibility/);
+});
+
+test('buildScopedModeCssV2 omits comfort spacing rules when spacing pack is disabled', () => {
+  const css = buildScopedModeCssV2({
+    modeId: MODE_IDS.COMFORT_VISUAL,
+    intensity: 0.75,
+    spacingPackEnabled: false,
+  });
+  const focusCss = buildScopedModeCssV2({
+    modeId: MODE_IDS.FOCUS,
+    intensity: 0.75,
+    spacingPackEnabled: false,
+  });
+
+  assert(!css.includes('line-height: var(--aura-line-height'));
+  assert(!css.includes('p + p { margin-top: var(--aura-paragraph-spacing'));
+  assert(css.includes('font-size: var(--aura-font-size'));
+  assert(css.includes('letter-spacing: var(--aura-letter-spacing'));
+  assert(css.includes('-webkit-text-fill-color: var(--aura-text-color) !important'));
+  assert(focusCss.includes('line-height: var(--aura-line-height'));
 });
 
 test('reapplying scoped tokens is idempotent and removes stale entries', () => {
@@ -460,6 +689,26 @@ test('reapplying scoped tokens is idempotent and removes stale entries', () => {
   assert(!tokensAttr.includes('--aura-font-size'));
 });
 
+test('reapplying scoped tokens removes stale link enhancement entries', () => {
+  const el = new MockElement();
+  applyScopedTokens(
+    el,
+    {
+      '--aura-link-decoration': 'underline',
+      '--aura-link-decoration-thickness': '0.12em',
+      '--aura-line-height': '1.8',
+    },
+    'owner-1',
+  );
+  applyScopedTokens(el, { '--aura-line-height': '1.9' }, 'owner-1');
+
+  assert.equal(el.style.get('--aura-link-decoration'), undefined);
+  assert.equal(el.style.get('--aura-link-decoration-thickness'), undefined);
+  assert.equal(el.style.get('--aura-line-height'), '1.9');
+  const tokensAttr = el.getAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR) || '';
+  assert.equal(tokensAttr.includes('--aura-link-decoration'), false);
+});
+
 test('removeTokensOwned removes only the owned keys', () => {
   const el = new MockElement();
   el.style.set('--aura-custom', 'keep');
@@ -471,6 +720,13 @@ test('removeTokensOwned removes only the owned keys', () => {
   assert.equal(el.style.get('--aura-font-size'), undefined);
   assert.equal(el.style.get('--aura-line-height'), '1.8');
   assert.equal(el.style.get('--aura-custom'), 'keep');
+  assert.equal(el.getAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR), '--aura-line-height');
+
+  const finalResult = removeTokensOwned(el, ['--aura-line-height']);
+  assert.equal(finalResult.ok, true);
+  assert.equal(finalResult.removed, 1);
+  assert.equal(el.style.get('--aura-line-height'), undefined);
+  assert.equal(el.getAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR), null);
 });
 
 test('computeAppliedHash is stable regardless of token order', () => {

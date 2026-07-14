@@ -1,5 +1,5 @@
 import { MODE_IDS, STATES, THRESHOLDS, STORAGE_KEYS } from '../shared/constants.js';
-import { getFromSession, setToSession, extractDomain } from '../shared/utils.js';
+import { getFromSession, mutateSessionValue, extractDomain } from '../shared/utils.js';
 import { stateManager } from './state-manager.js';
 import { telemetry } from './telemetry.js';
 import { getRuntimeState, patchRuntimeState } from './runtime-state.js';
@@ -42,7 +42,7 @@ class PerformanceMonitor {
   }
 
   async saveMetrics(metrics) {
-    await setToSession(STORAGE_KEYS.PERFORMANCE_METRICS, metrics);
+    await mutateSessionValue(STORAGE_KEYS.PERFORMANCE_METRICS, () => metrics);
   }
 
   async recordMutation(operationType) {
@@ -51,17 +51,15 @@ class PerformanceMonitor {
       return;
     }
 
-    const metrics = await this.getMetrics();
     const now = Date.now();
-
-    metrics.operations.push({
-      type: operationType,
-      time: now
+    await mutateSessionValue(STORAGE_KEYS.PERFORMANCE_METRICS, (storedMetrics) => {
+      const metrics = storedMetrics || { operations: [], latencies: [], heapDelta: null };
+      return {
+        ...metrics,
+        operations: [...(metrics.operations || []), { type: operationType, time: now }]
+          .filter((operation) => operation.time > now - ONE_MINUTE_MS),
+      };
     });
-
-    metrics.operations = metrics.operations.filter((operation) => operation.time > now - ONE_MINUTE_MS);
-
-    await this.saveMetrics(metrics);
     await this.checkThresholds();
   }
 
@@ -76,17 +74,13 @@ class PerformanceMonitor {
   }
 
   async recordLatency(duration) {
-    const metrics = await this.getMetrics();
-    metrics.latencies.push({
-      duration,
-      time: Date.now()
+    await mutateSessionValue(STORAGE_KEYS.PERFORMANCE_METRICS, (storedMetrics) => {
+      const metrics = storedMetrics || { operations: [], latencies: [], heapDelta: null };
+      return {
+        ...metrics,
+        latencies: [...(metrics.latencies || []), { duration, time: Date.now() }].slice(-10),
+      };
     });
-
-    while (metrics.latencies.length > 10) {
-      metrics.latencies.shift();
-    }
-
-    await this.saveMetrics(metrics);
     await this.checkThresholds();
   }
 
@@ -115,9 +109,10 @@ class PerformanceMonitor {
   }
 
   async saveHeapDelta(delta) {
-    const metrics = await this.getMetrics();
-    metrics.heapDelta = delta;
-    await this.saveMetrics(metrics);
+    await mutateSessionValue(STORAGE_KEYS.PERFORMANCE_METRICS, (storedMetrics) => ({
+      ...(storedMetrics || { operations: [], latencies: [] }),
+      heapDelta: delta,
+    }));
   }
 
   async getMutationRate() {
@@ -213,7 +208,15 @@ class PerformanceMonitor {
         }
 
         try {
-          await cssApplier.removeMode(tabId, modeId, undefined, { trackRestore: false });
+          const removal = await cssApplier.removeMode(tabId, modeId, undefined, { trackRestore: false });
+          if (removal?.ok === false) {
+            console.warn('[PerformanceMonitor] Failed to remove mode during degraded transition', {
+              tabId,
+              modeId,
+              error: removal.error || removal.reason || 'REMOVE_FAILED',
+            });
+            continue;
+          }
           await stateManager.updateModeState(tabId, modeId, STATES.DEGRADED);
 
           const tab = await chrome.tabs.get(tabId);

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import '../content/content-bootstrap.runtime.js';
+import '../content/content-message-router.runtime.js';
 import { MODE_ENGINE_FLAG_DEFAULTS } from './fixtures/stub-constants.js';
 
 const fixtureBase = path.join(process.cwd(), 'tests', 'fixtures');
@@ -41,6 +43,7 @@ function setupGlobals({ featureFlags: featureFlagOverrides = {} } = {}) {
   delete global.performance;
   delete global.__AURA_TEST_MODULE_URLS__;
   delete global.AURA_MODE_ENGINE_SCOPED_V2;
+  delete global.AURA_PAGE_SIGNALS_ADAPTER_V1;
 
   const versionTag = Math.random().toString(36).slice(2);
   const taggedConstantsUrl = `${constantsUrl}?v=${versionTag}`;
@@ -48,6 +51,7 @@ function setupGlobals({ featureFlags: featureFlagOverrides = {} } = {}) {
 
   const body = buildFixtureBody();
   const document = new StubDocument(body);
+  const runtimeListeners = [];
 
   global.NodeFilter = { SHOW_ELEMENT: 1 };
   global.performance = { now: () => 0 };
@@ -101,7 +105,19 @@ function setupGlobals({ featureFlags: featureFlagOverrides = {} } = {}) {
         }
         return response;
       },
-      onMessage: { addListener: () => {}, removeListener: () => {} },
+      onMessage: {
+        addListener: (listener) => {
+          if (typeof listener === 'function' && !runtimeListeners.includes(listener)) {
+            runtimeListeners.push(listener);
+          }
+        },
+        removeListener: (listener) => {
+          const index = runtimeListeners.indexOf(listener);
+          if (index >= 0) {
+            runtimeListeners.splice(index, 1);
+          }
+        },
+      },
     },
     storage: {
       local: {
@@ -135,7 +151,7 @@ function setupGlobals({ featureFlags: featureFlagOverrides = {} } = {}) {
 
   global.__AURA_TEST_MODULE_URLS__ = moduleUrls;
 
-  return { document, moduleUrls };
+  return { document, moduleUrls, runtimeListeners };
 }
 
 class StubElement {
@@ -407,4 +423,75 @@ test('Budget below minimum triggers v2 NONE without fallback', async () => {
   assert.equal(root, null);
   assert.equal(profile.reason.includes('v2-none'), true);
   assert.equal(typeof SMARTSCOPE_TIMEOUT_MS, 'number');
+});
+
+test('PAGE_SIGNALS_COLLECT_V1 returns compact page signals on demand', async () => {
+  const { document, runtimeListeners } = setupGlobals({ featureFlags: { smartScopeV2: true } });
+  const signals = {
+    schemaVersion: 1,
+    frameId: 4,
+    viewport: { w: 800, h: 600 },
+    pageHints: {
+      urlKind: 'UNKNOWN',
+      semanticArticleCount: 1,
+      formCount: 0,
+      tableCount: 0,
+      mediaCount: 0,
+      fixedOrStickyCount: 0,
+      modalLikeCount: 0,
+    },
+    aggregateMetrics: {
+      textDensity: 0.4,
+      linkDensity: 0.1,
+      interactiveDensity: 0,
+      mediaDensity: 0,
+      formDensity: 0,
+      tableDensity: 0,
+      viewportCoverage: 0.5,
+    },
+    blocks: [],
+    stats: { elapsedMs: 1, nodesScanned: 3, candidatesSeen: 1, budgetHit: false },
+  };
+  global.AURA_PAGE_SIGNALS_ADAPTER_V1 = {
+    collectPageSignalsV1: (options) => {
+      assert.equal(options.doc, document);
+      assert.equal(options.frameId, 4);
+      assert.equal(options.budgetMs, 12);
+      return signals;
+    },
+  };
+
+  await import(`../content/content-main.js?run=${Date.now()}`);
+  await waitFor(() => runtimeListeners.length >= 2);
+  const listener = runtimeListeners[runtimeListeners.length - 1];
+  let response;
+  const handled = listener(
+    { action: 'PAGE_SIGNALS_COLLECT_V1', frameId: 4, budgetMs: 12 },
+    {},
+    (payload) => {
+      response = payload;
+    },
+  );
+
+  assert.equal(handled, true);
+  assert.deepEqual(response, { ok: true, signals });
+});
+
+test('PAGE_SIGNALS_COLLECT_V1 reports unavailable adapter without throwing', async () => {
+  const { runtimeListeners } = setupGlobals({ featureFlags: { smartScopeV2: true } });
+
+  await import(`../content/content-main.js?run=${Date.now()}`);
+  await waitFor(() => runtimeListeners.length >= 2);
+  const listener = runtimeListeners[runtimeListeners.length - 1];
+  let response;
+  const handled = listener(
+    { action: 'PAGE_SIGNALS_COLLECT_V1' },
+    {},
+    (payload) => {
+      response = payload;
+    },
+  );
+
+  assert.equal(handled, true);
+  assert.deepEqual(response, { ok: false, error: 'PAGE_SIGNALS_ADAPTER_UNAVAILABLE' });
 });

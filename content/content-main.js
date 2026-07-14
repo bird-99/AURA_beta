@@ -5,11 +5,24 @@
 const AURA = {};
 let debugTestHooksEnabled = false;
 const pendingTestHooks = new Map();
+const TEST_PING_ACTION = 'AURA_PING_TEST_V1';
+const TEST_PONG_ACTION = 'AURA_PONG_TEST_V1';
 const HEADING_FIX_ATTR = 'data-aura-heading-fix';
+const HEADING_FIX_ATTR_VALUE = '1';
+const HEADING_FIX_TEXT_VALUE = 'var(--aura-text-color)';
+const HEADING_FIX_PRIORITY = 'important';
 const HEADING_FIX_MAX = 120;
 const HEADING_FIX_MAX_MS = 12;
 const HEADING_CONTRAST_THRESHOLD = 4.5;
+const AURA_UI_OWNER_ATTR = 'data-aura-ui-owner';
+const SUGGESTION_BANNER_OWNER = 'suggestion-banner';
+const RESTORE_BUTTON_OWNER = 'restore-button';
+const SUGGESTION_BANNER_ID = 'aura-suggestion-banner';
+const RESTORE_BUTTON_ID = 'aura-restore-button';
 let headingFixSet = new Set();
+let headingFixSnapshots = new WeakMap();
+let headingFixApplied = new WeakMap();
+const auraOwnedUiHosts = new WeakSet();
 
 function exposeAuraNamespace() {
   if (!debugTestHooksEnabled) {
@@ -50,20 +63,6 @@ function updateDebugTestHooksEnabled(value) {
   }
 }
 
-function setAuraReadyMarker() {
-  try {
-    const root = document.documentElement;
-
-    if (root && root.dataset) {
-      root.dataset.auraReady = '1';
-    }
-  } catch (error) {
-    console.warn('[CS] Failed to set ready marker', error);
-  }
-}
-
-setAuraReadyMarker();
-
 function isExtContextValid() {
   return Boolean(globalThis.chrome?.runtime?.id && typeof chrome.runtime.getURL === 'function');
 }
@@ -85,69 +84,103 @@ function safeGetURL(path) {
   }
 }
 
-function ensureAuraContentLoaded() {
-  const alreadyLoaded = window.__AURA_CONTENT_MAIN_LOADED__ === true;
-
-  if (alreadyLoaded) {
-    const existingListener = window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__;
-
-    if (typeof existingListener === 'function') {
-      chrome.runtime.onMessage.removeListener(existingListener);
-      chrome.runtime.onMessage.addListener(existingListener);
-    }
-
-    return { alreadyLoaded: true };
-  }
-
-  window.__AURA_CONTENT_MAIN_LOADED__ = true;
-
-  return { alreadyLoaded: false };
-}
-
-const AURA_CONTENT_LOAD_STATE = ensureAuraContentLoaded();
+const DOCUMENT_CONTEXT_ACTION = 'GET_DOCUMENT_CONTEXT_V1';
 const EARLY_PING_ACTION = 'TEST_PING_CONTENT';
 
-if (typeof window !== 'undefined' && window.__AURA_CONTENT_READY_FOR_PING__ !== true) {
-  window.__AURA_CONTENT_READY_FOR_PING__ = false;
+function isTopFrameDocument() {
+  try {
+    return window.top === window;
+  } catch (_) {
+    return false;
+  }
 }
 
-function ensurePingListener() {
-  if (typeof window === 'undefined' || !isExtContextValid()) {
-    return;
+function activateContentBootstrapRuntime() {
+  const api = globalThis.AURA_CONTENT_BOOTSTRAP_V1;
+  if (
+    !isExtContextValid()
+    || api?.version !== 1
+    || typeof api.getOrCreate !== 'function'
+  ) {
+    console.error('[CS] Content bootstrap runtime unavailable');
+    return null;
   }
 
-  const existingListener = window.__AURA_PING_LISTENER__;
-
-  if (typeof existingListener === 'function') {
-    chrome.runtime.onMessage.removeListener(existingListener);
-    chrome.runtime.onMessage.addListener(existingListener);
-    return;
-  }
-
-  const pingListener = (message, sender, sendResponse) => {
-    const action = message?.action;
-    const isPingAction =
-      action === EARLY_PING_ACTION || (typeof ACTIONS !== 'undefined' && action === ACTIONS.TEST_PING_CONTENT);
-
-    if (!isPingAction) {
-      return false;
+  try {
+    const state = api.getOrCreate({
+      scope: window,
+      messagePort: {
+        addListener(listener) {
+          chrome.runtime.onMessage.addListener(listener);
+        },
+        removeListener(listener) {
+          chrome.runtime.onMessage.removeListener(listener);
+        },
+      },
+      isTopFrame: isTopFrameDocument,
+      pingAction: EARLY_PING_ACTION,
+      documentContextAction: DOCUMENT_CONTEXT_ACTION,
+    });
+    if (
+      state?.version !== 1
+      || typeof state.documentInstanceId !== 'string'
+      || !state.documentInstanceId
+      || typeof state.claim !== 'function'
+      || typeof state.markRetryableFailed !== 'function'
+      || typeof state.markReady !== 'function'
+      || typeof state.rearmMainListener !== 'function'
+      || typeof state.detachEarlyListener !== 'function'
+      || typeof state.invalidate !== 'function'
+    ) {
+      throw new Error('CONTENT_BOOTSTRAP_STATE_INVALID');
     }
-
-    sendResponse({ ok: window.__AURA_CONTENT_READY_FOR_PING__ === true });
-    return true;
-  };
-
-  window.__AURA_PING_LISTENER__ = pingListener;
-  chrome.runtime.onMessage.addListener(pingListener);
+    return state;
+  } catch (error) {
+    console.error('[CS] Content bootstrap runtime activation failed', error);
+    return null;
+  }
 }
 
-ensurePingListener();
+const AURA_CONTENT_BOOTSTRAP_STATE = activateContentBootstrapRuntime();
+const DOCUMENT_INSTANCE_ID = AURA_CONTENT_BOOTSTRAP_STATE?.documentInstanceId || null;
+const AURA_CONTENT_LOAD_STATE = AURA_CONTENT_BOOTSTRAP_STATE?.claim() || {
+  claimed: false,
+  invalidated: true,
+  generation: 0,
+};
+
+if (AURA_CONTENT_LOAD_STATE.alreadyLoaded) {
+  AURA_CONTENT_BOOTSTRAP_STATE.rearmMainListener();
+}
 
 let BOOTSTRAP_ABORTED = false;
 let BOOTSTRAP_ABORT_LOGGED = false;
 
 (async function bootstrapAuraContentMain() {
-  if (AURA_CONTENT_LOAD_STATE.alreadyLoaded) {
+  if (AURA_CONTENT_LOAD_STATE.claimed !== true) {
+    return;
+  }
+
+  const contentMessageRouterApi = globalThis.AURA_CONTENT_MESSAGE_ROUTER_V1;
+  if (contentMessageRouterApi == null) {
+    const reason = 'CONTENT_MESSAGE_ROUTER_UNAVAILABLE';
+    console.error('[CS] Content message router unavailable');
+    BOOTSTRAP_ABORTED = true;
+    AURA_CONTENT_BOOTSTRAP_STATE.markRetryableFailed(
+      AURA_CONTENT_LOAD_STATE.generation,
+      reason,
+      1,
+    );
+    return;
+  }
+  if (
+    contentMessageRouterApi.version !== 1
+    || typeof contentMessageRouterApi.createListener !== 'function'
+  ) {
+    const reason = 'CONTENT_MESSAGE_ROUTER_INCOMPATIBLE';
+    console.error('[CS] Content message router incompatible');
+    BOOTSTRAP_ABORTED = true;
+    AURA_CONTENT_BOOTSTRAP_STATE.invalidate(AURA_CONTENT_LOAD_STATE.generation, reason);
     return;
   }
 
@@ -159,9 +192,12 @@ let DECISIONS = {};
 let SMARTSCOPE_ACTIONS = {};
 let STORAGE_KEYS = {};
 let MODE_PREFS_DEFAULTS = {};
+let CONTENT_MESSAGE_ROUTES_V1 = {};
 
 const SHARED_CONSTANTS_REQUEST_TYPE = 'AURA_GET_SHARED_CONSTANTS_V1';
 const SHARED_CONSTANTS_TIMEOUT_MS = 2000;
+const SHARED_CONSTANTS_MAX_ATTEMPTS = 3;
+const SHARED_CONSTANTS_RETRY_BASE_DELAY_MS = 100;
 let sharedConstantsWarningLogged = false;
 
 function logSharedConstantsWarning(reason, detail) {
@@ -217,10 +253,34 @@ function loadSharedConstantsFromSW({ timeoutMs = SHARED_CONSTANTS_TIMEOUT_MS } =
   });
 }
 
+function isRetryableSharedConstantsFailure(reason) {
+  return reason === 'NO_RECEIVER' || reason === 'TIMEOUT' || reason === 'SW_ERROR';
+}
+
+async function loadSharedConstantsWithRetry({
+  maxAttempts = SHARED_CONSTANTS_MAX_ATTEMPTS,
+  timeoutMs = SHARED_CONSTANTS_TIMEOUT_MS,
+  baseDelayMs = SHARED_CONSTANTS_RETRY_BASE_DELAY_MS,
+} = {}) {
+  const attempts = Number.isInteger(maxAttempts) && maxAttempts > 0 ? maxAttempts : 1;
+  let result = { ok: false, reason: 'NO_RECEIVER' };
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    result = await loadSharedConstantsFromSW({ timeoutMs });
+    if (result.ok || !isRetryableSharedConstantsFailure(result.reason) || attempt === attempts) {
+      return { ...result, attempts: attempt };
+    }
+    const delayMs = Math.max(0, baseDelayMs) * (2 ** (attempt - 1));
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return { ...result, attempts };
+}
+
 setAuraTestHook('__TEST_LOAD_SHARED_CONSTANTS__', loadSharedConstantsFromSW);
 
 const sharedConstantsResultPromise = (async () => {
-  const result = await loadSharedConstantsFromSW();
+  const result = await loadSharedConstantsWithRetry();
 
   if (!result.ok) {
     logSharedConstantsWarning(result.reason, result.error);
@@ -242,6 +302,7 @@ function applySharedConstants(constants) {
   SMARTSCOPE_ACTIONS = constants.SMARTSCOPE_ACTIONS || SMARTSCOPE_ACTIONS;
   STORAGE_KEYS = constants.STORAGE_KEYS || STORAGE_KEYS;
   MODE_PREFS_DEFAULTS = constants.MODE_PREFS_DEFAULTS || MODE_PREFS_DEFAULTS;
+  CONTENT_MESSAGE_ROUTES_V1 = constants.CONTENT_MESSAGE_ROUTES_V1 || CONTENT_MESSAGE_ROUTES_V1;
 
   AURA.ACTIONS = ACTIONS;
   AURA.MODES = MODES;
@@ -274,6 +335,7 @@ let isFlagEnabled = (flagName) =>
   Object.prototype.hasOwnProperty.call(modeEngineFlagDefaults, flagName) && modeEngineFlagDefaults[flagName] === true;
 let getAllModeEngineFlags = () => ({ ...modeEngineFlagDefaults });
 let didLogFlagsLoadFailure = false;
+let modeEngineFlagStorageListener = null;
 
 async function loadFeatureFlagsFromSW({ timeoutMs = 2000 } = {}) {
   try {
@@ -316,16 +378,21 @@ const initModeEngineFlagApiResultPromise = (async function initModeEngineFlagApi
     didLogFlagsLoadFailure = true;
   }
 
+  if (AURA_CONTEXT_INVALIDATED) {
+    return { ok: false, reason: 'EXT_CONTEXT_INVALID' };
+  }
+
   try {
     modeEngineFlagDefaults = { ...defaultFlags };
     modeEngineFlagStorageKey =
       constantsResult?.constants?.STORAGE_KEYS?.FEATURE_FLAGS || modeEngineFlagStorageKey;
     if (chrome?.storage?.onChanged?.addListener) {
-      chrome.storage.onChanged.addListener((changes, areaName) => {
+      modeEngineFlagStorageListener = (changes, areaName) => {
         if (areaName === 'local' && Object.prototype.hasOwnProperty.call(changes, modeEngineFlagStorageKey)) {
           maybeRunModeEngineV2();
         }
-      });
+      };
+      chrome.storage.onChanged.addListener(modeEngineFlagStorageListener);
     }
 
     isFlagEnabled = (flagName) => flags?.[flagName] === true;
@@ -387,6 +454,11 @@ AURA.recordModeEngineMetric = recordModeEngineMetric;
 const sharedConstantsResult = await sharedConstantsResultPromise;
 if (!sharedConstantsResult.ok) {
   markBootstrapAborted(sharedConstantsResult.reason || 'EXT_CONTEXT_INVALID');
+  AURA_CONTENT_BOOTSTRAP_STATE.markRetryableFailed(
+    AURA_CONTENT_LOAD_STATE.generation,
+    sharedConstantsResult.reason || 'BOOTSTRAP_FAILED',
+    sharedConstantsResult.attempts,
+  );
   return;
 }
 
@@ -414,13 +486,24 @@ AURA.CONFIDENCE_LEVELS = CONFIDENCE_LEVELS;
 // ========== SECTION 2A: SAFE MESSAGING & TEARDOWN ==========
 const CONTEXT_INVALIDATED_MESSAGE = 'Extension context invalidated';
 let AURA_CONTEXT_INVALIDATED = false;
+let runtimeMessageListener = null;
 
 let activeDetectors = [];
+let activeSignalEngine = null;
 let activeBanner = null;
 let activeRestoreButton = null;
 let sitePolicyCache = null;
 let sitePolicyRequest = null;
 let sitePolicyWatcherEnabled = false;
+const sitePolicyWatcherState = {
+  historyObject: null,
+  originalPushState: null,
+  originalReplaceState: null,
+  wrappedPushState: null,
+  wrappedReplaceState: null,
+  popstateHandler: null,
+  hashchangeHandler: null,
+};
 const sitePolicySuppressionLoggedHosts = new Set();
 
 const SITE_POLICY_CACHE_TTL_MS = 30 * 1000;
@@ -433,6 +516,32 @@ function getCurrentHost() {
   } catch (error) {
     return '';
   }
+}
+
+function isOwnedAuraUiHost(element, owner) {
+  return Boolean(
+    element
+    && auraOwnedUiHosts.has(element)
+    && element.getAttribute?.(AURA_UI_OWNER_ATTR) === owner,
+  );
+}
+
+function findOwnedAuraUiHost(owner) {
+  try {
+    const candidates = document.querySelectorAll?.(`[${AURA_UI_OWNER_ATTR}="${owner}"]`) || [];
+    return Array.from(candidates).find((element) => isOwnedAuraUiHost(element, owner)) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function prepareAuraUiHost(element, preferredId, owner) {
+  const idCollision = document.getElementById?.(preferredId);
+  element.id = idCollision && !isOwnedAuraUiHost(idCollision, owner)
+    ? `${preferredId}-aura`
+    : preferredId;
+  element.setAttribute(AURA_UI_OWNER_ATTR, owner);
+  auraOwnedUiHosts.add(element);
 }
 
 function buildFallbackPolicy(host) {
@@ -555,6 +664,14 @@ async function ensureSitePolicyAllowed({ forceRefresh = false, context = 'unknow
   const result = await fetchSitePolicy({ forceRefresh, reason: context });
   const policy = result?.policy;
 
+  if (result?.ok !== true) {
+    if (activeBanner?.destroy) {
+      activeBanner.destroy();
+      activeBanner = null;
+    }
+    return false;
+  }
+
   if (policy?.allowed === false) {
     logPolicySuppressionOnce(policy, context);
     if (activeBanner?.destroy) {
@@ -590,8 +707,16 @@ function scheduleSitePolicyRefresh(reason) {
   }, SITE_POLICY_REFRESH_DEBOUNCE_MS);
 }
 
+function clearPageSignalTargetRegistry() {
+  try {
+    globalThis.AURA_PAGE_SIGNALS_ADAPTER_V1?.clearTargetRegistry?.();
+  } catch {
+    // Registry cleanup is best-effort and must not affect visible runtime behavior.
+  }
+}
+
 function startSitePolicyWatcher() {
-  if (sitePolicyWatcherEnabled || typeof window === 'undefined') {
+  if (sitePolicyWatcherEnabled || typeof window === 'undefined' || !isTopFrameDocument()) {
     return;
   }
 
@@ -602,29 +727,93 @@ function startSitePolicyWatcher() {
     const nextUrl = window.location?.href || '';
     if (nextUrl && nextUrl !== lastUrl) {
       lastUrl = nextUrl;
+      clearPageSignalTargetRegistry();
       scheduleSitePolicyRefresh(reason || 'spa');
     }
   };
 
-  const originalPushState = history.pushState.bind(history);
-  const originalReplaceState = history.replaceState.bind(history);
+  const historyObject = history;
+  const originalPushState = historyObject.pushState;
+  const originalReplaceState = historyObject.replaceState;
 
-  history.pushState = function pushStateWrapper(...args) {
-    const result = originalPushState(...args);
+  const wrappedPushState = function pushStateWrapper(...args) {
+    const result = originalPushState.apply(historyObject, args);
     checkForUrlChange('pushState');
     return result;
   };
 
-  history.replaceState = function replaceStateWrapper(...args) {
-    const result = originalReplaceState(...args);
+  const wrappedReplaceState = function replaceStateWrapper(...args) {
+    const result = originalReplaceState.apply(historyObject, args);
     checkForUrlChange('replaceState');
     return result;
   };
+  const popstateHandler = () => checkForUrlChange('popstate');
+  const hashchangeHandler = () => checkForUrlChange('hashchange');
 
-  window.addEventListener('popstate', () => checkForUrlChange('popstate'));
-  window.addEventListener('hashchange', () => checkForUrlChange('hashchange'));
+  historyObject.pushState = wrappedPushState;
+  historyObject.replaceState = wrappedReplaceState;
+  window.addEventListener('popstate', popstateHandler);
+  window.addEventListener('hashchange', hashchangeHandler);
+
+  Object.assign(sitePolicyWatcherState, {
+    historyObject,
+    originalPushState,
+    originalReplaceState,
+    wrappedPushState,
+    wrappedReplaceState,
+    popstateHandler,
+    hashchangeHandler,
+  });
 
   scheduleSitePolicyRefresh('init');
+}
+
+function stopSitePolicyWatcher() {
+  if (sitePolicyCache?.refreshTimer) {
+    clearTimeout(sitePolicyCache.refreshTimer);
+    sitePolicyCache.refreshTimer = null;
+  }
+
+  const {
+    historyObject,
+    originalPushState,
+    originalReplaceState,
+    wrappedPushState,
+    wrappedReplaceState,
+    popstateHandler,
+    hashchangeHandler,
+  } = sitePolicyWatcherState;
+
+  try {
+    if (historyObject?.pushState === wrappedPushState && originalPushState) {
+      historyObject.pushState = originalPushState;
+    }
+    if (historyObject?.replaceState === wrappedReplaceState && originalReplaceState) {
+      historyObject.replaceState = originalReplaceState;
+    }
+  } catch (error) {
+    console.warn('[CS] Site policy history teardown failed', error);
+  }
+
+  if (popstateHandler) {
+    window.removeEventListener('popstate', popstateHandler);
+  }
+  if (hashchangeHandler) {
+    window.removeEventListener('hashchange', hashchangeHandler);
+  }
+
+  Object.assign(sitePolicyWatcherState, {
+    historyObject: null,
+    originalPushState: null,
+    originalReplaceState: null,
+    wrappedPushState: null,
+    wrappedReplaceState: null,
+    popstateHandler: null,
+    hashchangeHandler: null,
+  });
+  sitePolicyWatcherEnabled = false;
+  sitePolicyRequest = null;
+  sitePolicyCache = null;
 }
 
 function markContextInvalidated(reason = 'context-invalidated') {
@@ -640,7 +829,15 @@ function markContextInvalidated(reason = 'context-invalidated') {
   performTeardown();
 }
 
-function performTeardown() {
+function performTeardown({ invalidateBootstrap = true } = {}) {
+  clearPageSignalTargetRegistry();
+  stopSitePolicyWatcher();
+
+  if (modeEngineFlagStorageListener && chrome?.storage?.onChanged?.removeListener) {
+    chrome.storage.onChanged.removeListener(modeEngineFlagStorageListener);
+    modeEngineFlagStorageListener = null;
+  }
+
   activeDetectors.forEach((detector) => {
     try {
       detector?.destroy?.();
@@ -649,6 +846,7 @@ function performTeardown() {
     }
   });
   activeDetectors = [];
+  activeSignalEngine = null;
 
   if (activeBanner) {
     try {
@@ -669,9 +867,41 @@ function performTeardown() {
   }
 
   stopSpaHooksV2IfRunning();
+  stopFocusOverlayPrefsWatcher();
+  stopReadingRulerRuntimeControls();
+  cleanupFocusRuntime();
+  disarmModeEngineAnim(getActiveScopeRoot());
 
-  teardownFocusOverlayV2({ destroyRoot: true });
+  if (typeof runtimeMessageListener === 'function') {
+    try {
+      chrome.runtime.onMessage.removeListener(runtimeMessageListener);
+    } catch (error) {
+      console.warn('[CS] Runtime listener teardown failed', error);
+    }
+  }
+
+  try {
+    AURA_CONTENT_BOOTSTRAP_STATE.detachEarlyListener();
+  } catch (error) {
+    console.warn('[CS] Early listener teardown failed', error);
+  }
+
+  if (invalidateBootstrap) {
+    AURA_CONTENT_BOOTSTRAP_STATE.invalidate(
+      AURA_CONTENT_LOAD_STATE.generation,
+      'content-main-teardown',
+    );
+  }
+
+  if (window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__ === runtimeMessageListener) {
+    delete window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__;
+  }
+  if (window.__AURA_CONTENT_MAIN_TEARDOWN__ === markContextInvalidated) {
+    delete window.__AURA_CONTENT_MAIN_TEARDOWN__;
+  }
 }
+
+window.__AURA_CONTENT_MAIN_TEARDOWN__ = markContextInvalidated;
 
 function isContextInvalidatedError(errorMessage = '') {
   return errorMessage.includes(CONTEXT_INVALIDATED_MESSAGE);
@@ -781,10 +1011,32 @@ function sendMessageSilently(message, { warnKey, warnMessage } = {}) {
 
 // ========== SECTION 2: TAB ID ACQUISITION ==========
 let CURRENT_TAB_ID = null;
+let currentTabIdRequest = null;
 let contentReadySentV2 = false;
 
+async function acquireCurrentTabId() {
+  if (typeof CURRENT_TAB_ID === 'number') {
+    return CURRENT_TAB_ID;
+  }
+  if (!currentTabIdRequest) {
+    currentTabIdRequest = safeSendMessage(
+      { action: ACTIONS.GET_TAB_ID },
+      { contextLabel: 'get-tab-id' },
+    ).then((response) => {
+      if (!response || typeof response.tabId !== 'number') {
+        return null;
+      }
+      CURRENT_TAB_ID = response.tabId;
+      return CURRENT_TAB_ID;
+    }).finally(() => {
+      currentTabIdRequest = null;
+    });
+  }
+  return currentTabIdRequest;
+}
+
 function notifyContentReadyV2(tabId) {
-  if (AURA_CONTEXT_INVALIDATED || contentReadySentV2) {
+  if (AURA_CONTEXT_INVALIDATED || contentReadySentV2 || !isTopFrameDocument()) {
     return;
   }
 
@@ -798,13 +1050,18 @@ function notifyContentReadyV2(tabId) {
 
   contentReadySentV2 = true;
   sendMessageSilently(
-    { action: ACTIONS.CONTENT_SCRIPT_READY_V2, tabId, url: location.href },
+    {
+      action: ACTIONS.CONTENT_SCRIPT_READY_V2,
+      tabId,
+      url: location.href,
+      documentInstanceId: DOCUMENT_INSTANCE_ID,
+    },
     { warnKey: SILENT_WARNING_KEYS.READY_V2, warnMessage: '[CS] READY handshake failed (cs-ready-v2)' },
   );
 }
 
 function requestV2Reapply(reason) {
-  if (AURA_CONTEXT_INVALIDATED) {
+  if (AURA_CONTEXT_INVALIDATED || !isTopFrameDocument()) {
     return;
   }
 
@@ -833,22 +1090,17 @@ initModeEngineFlagApiResultPromise
       return null;
     }
 
-    return safeSendMessage({ action: ACTIONS.GET_TAB_ID }, { contextLabel: 'get-tab-id' }).then((response) => {
-      if (!response || typeof response.tabId !== 'number') {
+    return acquireCurrentTabId().then((tabId) => {
+      if (typeof tabId !== 'number') {
         console.error('[CS] Failed to acquire tabId: invalid response');
         return null;
       }
-
-      CURRENT_TAB_ID = response.tabId;
       init();
       startSitePolicyWatcher();
       maybeRunModeEngineV2();
-      startReadingRulerShortcut();
-      handleReadingRulerStateChange().catch((error) => {
-        modeEngineDebugLog('Reading ruler entry failed', error);
-      });
-      handleFocusNotObscuredStateChange().catch((error) => {
-        modeEngineDebugLog('Focus not obscured entry failed', error);
+      startReadingRulerRuntimeControls();
+      applyFocusRuntime().catch((error) => {
+        modeEngineDebugLog('Focus runtime entry failed', error);
       });
       notifyContentReadyV2(CURRENT_TAB_ID);
       return null;
@@ -864,10 +1116,110 @@ class ZoomDetector {
   // Intentionally empty stub
 }
 
-// ========== SECTION 4: COLOR SCHEME DETECTOR ==========
-class ColorSchemeDetector {
+// ========== SECTION 4: SIGNAL ENGINE ==========
+const SIGNAL_EMIT_RULES = {
+  colorScheme: { dedupe: true, throttleMs: 0, cooldownMs: 0 },
+  readingBehavior: { dedupe: true, throttleMs: 1000, cooldownMs: 2000 },
+  viewportScale: { dedupe: true, throttleMs: 250, cooldownMs: 500 },
+  viewportScroll: { dedupe: true, throttleMs: 250, cooldownMs: 500 },
+};
+
+function buildSignalContext() {
+  return {
+    pageHost: window.location?.hostname || '',
+    frameId: 0,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  };
+}
+
+function createSignalValueKey(value) {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch (error) {
+      return '[object]';
+    }
+  }
+
+  return String(value);
+}
+
+class SignalEngine {
   constructor(tabId) {
     this.tabId = tabId;
+    this.lastByType = new Map();
+  }
+
+  resetBaseline(reason = 'rearm') {
+    if (AURA_CONTEXT_INVALIDATED) {
+      return;
+    }
+
+    this.lastByType.clear();
+    modeEngineDebugLog('SignalEngine baseline reset', { reason });
+  }
+
+  emit({ type, value, confidence, source, context }) {
+    if (AURA_CONTEXT_INVALIDATED) {
+      return false;
+    }
+
+    if (typeof this.tabId !== 'number' || !type) {
+      return false;
+    }
+
+    const now = Date.now();
+    const rules = SIGNAL_EMIT_RULES[type] || { dedupe: true, throttleMs: 0, cooldownMs: 0 };
+    const valueKey = createSignalValueKey(value);
+    const last = this.lastByType.get(type);
+
+    if (rules.dedupe && last?.valueKey === valueKey) {
+      return false;
+    }
+
+    if (rules.throttleMs && last?.sentAt && now - last.sentAt < rules.throttleMs) {
+      return false;
+    }
+
+    if (rules.cooldownMs && last?.emittedAt && now - last.emittedAt < rules.cooldownMs) {
+      return false;
+    }
+
+    const signalEvent = {
+      type,
+      value,
+      confidence,
+      ts: now,
+      source,
+      context: context || buildSignalContext(),
+    };
+
+    this.lastByType.set(type, { valueKey, sentAt: now, emittedAt: now });
+
+    safeSendMessage(
+      {
+        action: ACTIONS.SIGNAL_DETECTED,
+        tabId: this.tabId,
+        signal: signalEvent,
+        timestamp: now,
+      },
+      { contextLabel: `signal-${type}` },
+    );
+
+    return true;
+  }
+}
+
+// ========== SECTION 5: COLOR SCHEME DETECTOR ==========
+class ColorSchemeDetector {
+  constructor(tabId, signalEngine) {
+    this.tabId = tabId;
+    this.signalEngine = signalEngine;
     this.currentScheme = null;
     this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     this._onChange = this.checkColorScheme.bind(this);
@@ -892,17 +1244,24 @@ class ColorSchemeDetector {
     const scheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     if (scheme !== this.currentScheme) {
       this.currentScheme = scheme;
-      safeSendMessage(
-        {
-          action: ACTIONS.SIGNAL_DETECTED,
-          tabId: this.tabId,
-          signal: SIGNALS.COLOR_SCHEME,
-          value: scheme,
-          timestamp: Date.now()
-        },
-        { contextLabel: 'signal-color-scheme' },
-      );
+      this.signalEngine?.emit({
+        type: SIGNALS.COLOR_SCHEME,
+        value: scheme,
+        confidence: 0.8,
+        source: 'matchMedia',
+        context: buildSignalContext(),
+      });
     }
+  }
+
+  rearm(reason = 'spa') {
+    if (AURA_CONTEXT_INVALIDATED) {
+      return;
+    }
+
+    this.currentScheme = null;
+    modeEngineDebugLog('ColorSchemeDetector rearm', { reason });
+    this.checkColorScheme();
   }
 
   destroy() {
@@ -914,10 +1273,97 @@ class ColorSchemeDetector {
   }
 }
 
-// ========== SECTION 5: READING BEHAVIOR DETECTOR ==========
-class ReadingBehaviorDetector {
-  constructor(tabId) {
+// ========== SECTION 6: VISUAL VIEWPORT DETECTOR ==========
+class VisualViewportDetector {
+  constructor(tabId, signalEngine) {
     this.tabId = tabId;
+    this.signalEngine = signalEngine;
+    this.viewport = window.visualViewport || null;
+    this._onViewportChangeBound = this.onViewportChange.bind(this);
+    this.init();
+  }
+
+  init() {
+    if (!this.viewport) {
+      return;
+    }
+
+    if (typeof this.tabId !== 'number') {
+      console.error('[CS] VisualViewportDetector cannot init: missing tabId');
+      return;
+    }
+
+    this.onViewportChange();
+    this.viewport.addEventListener('resize', this._onViewportChangeBound, { passive: true });
+    this.viewport.addEventListener('scroll', this._onViewportChangeBound, { passive: true });
+  }
+
+  onViewportChange() {
+    if (AURA_CONTEXT_INVALIDATED || !this.viewport) {
+      return;
+    }
+
+    const scale = this.viewport.scale;
+    if (typeof scale === 'number' && Number.isFinite(scale) && scale > 0) {
+      this.signalEngine?.emit({
+        type: SIGNALS.VIEWPORT_SCALE,
+        value: Number(scale.toFixed(3)),
+        confidence: 0.9,
+        source: 'visualViewport',
+        context: {
+          ...buildSignalContext(),
+          viewportWidth: Math.round(this.viewport.width),
+          viewportHeight: Math.round(this.viewport.height),
+        },
+      });
+    }
+
+    const scrollValue = {
+      offsetTop: Number(this.viewport.offsetTop.toFixed(1)),
+      offsetLeft: Number(this.viewport.offsetLeft.toFixed(1)),
+    };
+
+    this.signalEngine?.emit({
+      type: SIGNALS.VIEWPORT_SCROLL,
+      value: scrollValue,
+      confidence: 0.6,
+      source: 'visualViewport',
+      context: {
+        ...buildSignalContext(),
+        viewportWidth: Math.round(this.viewport.width),
+        viewportHeight: Math.round(this.viewport.height),
+      },
+    });
+  }
+
+  rearm(reason = 'spa') {
+    if (AURA_CONTEXT_INVALIDATED) {
+      return;
+    }
+
+    modeEngineDebugLog('VisualViewportDetector rearm', { reason });
+    this.onViewportChange();
+  }
+
+  destroy() {
+    if (!this.viewport) {
+      return;
+    }
+
+    try {
+      this.viewport.removeEventListener('resize', this._onViewportChangeBound);
+      this.viewport.removeEventListener('scroll', this._onViewportChangeBound);
+    } catch (error) {
+      console.warn('[CS] Failed to remove visual viewport listeners', error);
+    }
+  }
+}
+
+// ========== SECTION 7: READING BEHAVIOR DETECTOR ==========
+class ReadingBehaviorDetector {
+  constructor(tabId, signalEngine) {
+    this.tabId = tabId;
+    this.signalEngine = signalEngine;
     this.scrollEvents = [];
     this._onScrollBound = this.onScroll.bind(this);
     this._onSelectionChangeBound = this.onSelectionChange.bind(this);
@@ -946,16 +1392,13 @@ class ReadingBehaviorDetector {
     this.scrollEvents = this.scrollEvents.filter((timestamp) => timestamp > windowStart);
 
     if (this.scrollEvents.length >= READING_CONFIG.SCROLL_THRESHOLD) {
-      safeSendMessage(
-        {
-          action: ACTIONS.SIGNAL_DETECTED,
-          tabId: this.tabId,
-          signal: SIGNALS.READING_BEHAVIOR,
-          value: 'rapid-scrolling',
-          timestamp: now
-        },
-        { contextLabel: 'signal-reading-scroll' },
-      );
+      this.signalEngine?.emit({
+        type: SIGNALS.READING_BEHAVIOR,
+        value: 'rapid-scrolling',
+        confidence: 0.6,
+        source: 'readingBehavior',
+        context: buildSignalContext(),
+      });
       this.scrollEvents = [];
     }
   }
@@ -968,17 +1411,23 @@ class ReadingBehaviorDetector {
     const selection = window.getSelection();
     const text = selection ? selection.toString().trim() : '';
     if (text.length >= READING_CONFIG.SELECTION_MIN_LENGTH) {
-      safeSendMessage(
-        {
-          action: ACTIONS.SIGNAL_DETECTED,
-          tabId: this.tabId,
-          signal: SIGNALS.READING_BEHAVIOR,
-          value: 'text-selection',
-          timestamp: Date.now()
-        },
-        { contextLabel: 'signal-reading-selection' },
-      );
+      this.signalEngine?.emit({
+        type: SIGNALS.READING_BEHAVIOR,
+        value: 'text-selection',
+        confidence: 0.5,
+        source: 'readingBehavior',
+        context: buildSignalContext(),
+      });
     }
+  }
+
+  rearm(reason = 'spa') {
+    if (AURA_CONTEXT_INVALIDATED) {
+      return;
+    }
+
+    this.scrollEvents = [];
+    modeEngineDebugLog('ReadingBehaviorDetector rearm', { reason });
   }
 
   destroy() {
@@ -991,8 +1440,10 @@ class ReadingBehaviorDetector {
 AURA.ZoomDetector = ZoomDetector;
 AURA.ColorSchemeDetector = ColorSchemeDetector;
 AURA.ReadingBehaviorDetector = ReadingBehaviorDetector;
+AURA.VisualViewportDetector = VisualViewportDetector;
+AURA.SignalEngine = SignalEngine;
 
-// ========== SECTION 6: SUGGESTION BANNER ==========
+// ========== SECTION 8: SUGGESTION BANNER ==========
 const BANNER_POSITION = {
   TOP_RIGHT: 'top-right',
   BOTTOM_RIGHT: 'bottom-right'
@@ -1039,7 +1490,7 @@ function createButton(label, onActivate) {
 class SuggestionBanner {
   constructor() {
     this.bannerHost = document.createElement('div');
-    this.bannerHost.id = 'aura-suggestion-banner';
+    prepareAuraUiHost(this.bannerHost, SUGGESTION_BANNER_ID, SUGGESTION_BANNER_OWNER);
     this.bannerHost.setAttribute('aria-live', 'polite');
     this.bannerHost.setAttribute('role', 'status');
 
@@ -1196,7 +1647,7 @@ class SuggestionBanner {
     this.confidence.className = `aura-confidence confidence-${descriptor.level}`;
   }
 
-  async show({ modeId, score = 0, position = BANNER_POSITION.TOP_RIGHT }) {
+  show({ modeId, score = 0, position = BANNER_POSITION.TOP_RIGHT }) {
     if (AURA_CONTEXT_INVALIDATED) {
       return;
     }
@@ -1250,7 +1701,12 @@ class SuggestionBanner {
       return;
     }
 
-    await safeSendMessage(
+    const buttons = Array.from(this.actions?.querySelectorAll?.('button') || []);
+    buttons.forEach((button) => {
+      button.disabled = true;
+    });
+
+    const response = await safeSendMessage(
       {
         action: ACTIONS.USER_DECISION,
         tabId: CURRENT_TAB_ID,
@@ -1259,6 +1715,19 @@ class SuggestionBanner {
       },
       { contextLabel: 'banner-decision' },
     );
+
+    if (response?.ok !== true) {
+      const detail = response?.detail || response?.reason || response?.error || 'Request failed';
+      const prefix =
+        decision === DECISIONS.ENABLED
+          ? 'AURA could not apply this mode yet.'
+          : 'AURA could not save this decision yet.';
+      this.message.textContent = `${prefix} ${detail}`;
+      buttons.forEach((button) => {
+        button.disabled = false;
+      });
+      return;
+    }
 
     this.destroy();
   }
@@ -1333,7 +1802,7 @@ function handleTestInjectSuggestionBanner(modeId, confidence, signals) {
       signals: normalizedSignals
     });
 
-    const host = document.getElementById('aura-suggestion-banner');
+    const host = activeBanner?.bannerHost || findOwnedAuraUiHost(SUGGESTION_BANNER_OWNER);
     if (host) {
       host.setAttribute('role', 'status');
       host.setAttribute('aria-live', 'polite');
@@ -1367,13 +1836,13 @@ class RestoreButton {
   }
 
   inject() {
-    const existingButton = document.getElementById('aura-restore-button');
-    if (existingButton && existingButton.parentNode) {
+    const existingButton = findOwnedAuraUiHost(RESTORE_BUTTON_OWNER);
+    if (existingButton?.parentNode) {
       existingButton.parentNode.removeChild(existingButton);
     }
 
     this.host = document.createElement('div');
-    this.host.id = 'aura-restore-button';
+    prepareAuraUiHost(this.host, RESTORE_BUTTON_ID, RESTORE_BUTTON_OWNER);
     this.shadowRoot = this.host.attachShadow({ mode: 'closed' });
 
     const style = document.createElement('style');
@@ -1439,20 +1908,29 @@ class RestoreButton {
   }
 
   async handleRestore() {
-    if (AURA_CONTEXT_INVALIDATED || typeof CURRENT_TAB_ID !== 'number') {
+    if (AURA_CONTEXT_INVALIDATED) {
       return;
     }
 
-    await safeSendMessage(
+    const tabId = await acquireCurrentTabId();
+    if (typeof tabId !== 'number') return;
+
+    const response = await safeSendMessage(
       {
         action: ACTIONS.RESTORE_MODE,
-        tabId: CURRENT_TAB_ID,
+        tabId,
         modeId: this.modeId
       },
       { contextLabel: 'restore-mode' },
     );
 
-    this.remove();
+    if (response?.ok === true) {
+      this.remove();
+    } else if (this.button) {
+      this.button.textContent = 'Retry restore';
+      this.button.setAttribute('aria-label', 'Retry restore original page');
+      this.button.title = response?.error || response?.reason || 'Restore failed';
+    }
   }
 
   remove() {
@@ -1878,6 +2356,115 @@ function resolveHeadingBackgroundColor(element, fallbackBackground) {
   return fallbackBackground || null;
 }
 
+function readHeadingInlineProperty(style, property) {
+  if (!style) {
+    return { value: '', priority: '' };
+  }
+
+  const value = typeof style.getPropertyValue === 'function'
+    ? style.getPropertyValue(property)
+    : style[property];
+  const priority = typeof style.getPropertyPriority === 'function'
+    ? style.getPropertyPriority(property)
+    : style[`${property}Priority`];
+
+  return {
+    value: typeof value === 'string' ? value : '',
+    priority: typeof priority === 'string' ? priority : '',
+  };
+}
+
+function headingInlinePropertyMatches(style, property, expected) {
+  if (!expected) {
+    return false;
+  }
+  const current = readHeadingInlineProperty(style, property);
+  return current.value === expected.value && current.priority === expected.priority;
+}
+
+function captureHeadingFixSnapshot(heading) {
+  const attrValue = typeof heading.getAttribute === 'function' ? heading.getAttribute(HEADING_FIX_ATTR) : null;
+  return {
+    color: readHeadingInlineProperty(heading.style, 'color'),
+    textFillColor: readHeadingInlineProperty(heading.style, '-webkit-text-fill-color'),
+    attrHad: attrValue !== null,
+    attrValue,
+  };
+}
+
+function getHeadingFixSnapshot(heading) {
+  let snapshot = headingFixSnapshots.get(heading);
+  if (!snapshot) {
+    snapshot = captureHeadingFixSnapshot(heading);
+    headingFixSnapshots.set(heading, snapshot);
+  }
+  return snapshot;
+}
+
+function getHeadingFixApplied(heading) {
+  let applied = headingFixApplied.get(heading);
+  if (!applied) {
+    applied = {};
+    headingFixApplied.set(heading, applied);
+  }
+  return applied;
+}
+
+function prepareHeadingFixProperty(heading, property, snapshotKey) {
+  const snapshot = getHeadingFixSnapshot(heading);
+  const applied = getHeadingFixApplied(heading);
+  if (applied[property] && !headingInlinePropertyMatches(heading.style, property, applied[property])) {
+    snapshot[snapshotKey] = readHeadingInlineProperty(heading.style, property);
+  }
+}
+
+function rememberHeadingFixProperty(heading, property) {
+  const applied = getHeadingFixApplied(heading);
+  applied[property] = {
+    value: HEADING_FIX_TEXT_VALUE,
+    priority: HEADING_FIX_PRIORITY,
+  };
+}
+
+function prepareHeadingFixAttribute(heading) {
+  const snapshot = getHeadingFixSnapshot(heading);
+  const applied = getHeadingFixApplied(heading);
+  const attrValue = typeof heading.getAttribute === 'function' ? heading.getAttribute(HEADING_FIX_ATTR) : null;
+  if (applied.attr === HEADING_FIX_ATTR_VALUE && attrValue !== HEADING_FIX_ATTR_VALUE) {
+    snapshot.attrHad = attrValue !== null;
+    snapshot.attrValue = attrValue;
+  }
+}
+
+function restoreHeadingFixProperty(heading, property, snapshotValue, appliedValue) {
+  if (!heading?.style || !appliedValue || !headingInlinePropertyMatches(heading.style, property, appliedValue)) {
+    return;
+  }
+
+  if (snapshotValue?.value) {
+    heading.style.setProperty(property, snapshotValue.value, snapshotValue.priority || '');
+  } else {
+    heading.style.removeProperty(property);
+  }
+}
+
+function restoreHeadingFixAttribute(heading, snapshot, applied) {
+  if (!heading || typeof heading.getAttribute !== 'function') {
+    return;
+  }
+
+  const currentAttr = heading.getAttribute(HEADING_FIX_ATTR);
+  if (currentAttr !== applied?.attr) {
+    return;
+  }
+
+  if (snapshot?.attrHad) {
+    heading.setAttribute(HEADING_FIX_ATTR, snapshot.attrValue);
+  } else if (typeof heading.removeAttribute === 'function') {
+    heading.removeAttribute(HEADING_FIX_ATTR);
+  }
+}
+
 function fixUnreadableHeadings(scopeRoot) {
   if (!scopeRoot || !scopeRoot.isConnected) {
     return;
@@ -1931,9 +2518,15 @@ function fixUnreadableHeadings(scopeRoot) {
       continue;
     }
 
-    heading.style.setProperty('color', 'var(--aura-text-color)', 'important');
-    heading.style.setProperty('-webkit-text-fill-color', 'var(--aura-text-color)', 'important');
-    heading.setAttribute(HEADING_FIX_ATTR, '1');
+    prepareHeadingFixProperty(heading, 'color', 'color');
+    prepareHeadingFixProperty(heading, '-webkit-text-fill-color', 'textFillColor');
+    prepareHeadingFixAttribute(heading);
+    heading.style.setProperty('color', HEADING_FIX_TEXT_VALUE, HEADING_FIX_PRIORITY);
+    rememberHeadingFixProperty(heading, 'color');
+    heading.style.setProperty('-webkit-text-fill-color', HEADING_FIX_TEXT_VALUE, HEADING_FIX_PRIORITY);
+    rememberHeadingFixProperty(heading, '-webkit-text-fill-color');
+    heading.setAttribute(HEADING_FIX_ATTR, HEADING_FIX_ATTR_VALUE);
+    getHeadingFixApplied(heading).attr = HEADING_FIX_ATTR_VALUE;
     headingFixSet.add(heading);
   }
 }
@@ -1945,19 +2538,20 @@ function clearHeadingFixes() {
   }
 
   headingFixSet.forEach((heading) => {
-    if (!heading || !(heading instanceof Element) || !heading.isConnected) {
+    if (!heading || !(heading instanceof Element)) {
       return;
     }
 
-    if (heading.style?.removeProperty) {
-      heading.style.removeProperty('color');
-      heading.style.removeProperty('-webkit-text-fill-color');
-    }
-
-    heading.removeAttribute(HEADING_FIX_ATTR);
+    const snapshot = headingFixSnapshots.get(heading);
+    const applied = headingFixApplied.get(heading);
+    restoreHeadingFixProperty(heading, 'color', snapshot?.color, applied?.color);
+    restoreHeadingFixProperty(heading, '-webkit-text-fill-color', snapshot?.textFillColor, applied?.['-webkit-text-fill-color']);
+    restoreHeadingFixAttribute(heading, snapshot, applied);
   });
 
   headingFixSet = new Set();
+  headingFixSnapshots = new WeakMap();
+  headingFixApplied = new WeakMap();
 }
 
 function measureScopeContrast(sampleLimit = CONTRAST_SAMPLE_LIMIT) {
@@ -2073,319 +2667,28 @@ function isDarkFromTokenMap(tokenMap) {
   return tokenMap['--aura-color-scheme'] === 'dark';
 }
 
-function resetDarkRescanBudget(now = Date.now()) {
-  darkRescanWindowStart = now;
-  darkRescanCount = 0;
-}
+const DARK_COMFORT_THEME_TOKEN_KEYS = new Set([
+  '--aura-color-scheme',
+  '--aura-bg-color',
+  '--aura-text-color',
+  '--aura-muted-text-color',
+  '--aura-border-color',
+  '--aura-surface-1',
+  '--aura-surface-2',
+  '--aura-link-color',
+  '--aura-link-visited-color',
+  '--aura-link-hover-color',
+  '--aura-focus-color',
+]);
 
-function canPerformDarkRescan(now = Date.now()) {
-  if (!darkRescanWindowStart || now - darkRescanWindowStart > DARK_SURFACE_RESCAN_WINDOW_MS) {
-    resetDarkRescanBudget(now);
-  }
-  return darkRescanCount < DARK_SURFACE_MAX_RESCANS_PER_MIN;
-}
-
-function applyDarkSurfaceTagsSafe(scopeRoot, source = 'apply', budget = DARK_SURFACE_SCAN_BUDGET) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  const runtimeModule = globalThis.AURA_MODE_ENGINE_SCOPED_V2 || null;
-  const applyDarkSurfaceTags = runtimeModule?.applyDarkSurfaceTags;
-  if (typeof applyDarkSurfaceTags !== 'function') {
-    return;
+function sanitizeDarkComfortThemeTokens(tokenMap, executorActive) {
+  if (!isDarkFromTokenMap(tokenMap) || executorActive === true) {
+    return tokenMap;
   }
 
-  try {
-    applyDarkSurfaceTags(scopeRoot, budget);
-  } catch (error) {
-    modeEngineDebugLog(`Dark surface scan failed (${source})`, error);
-  }
-}
-
-function applyDarkSurfaceInlineOverridesSafe(scopeRoot, source = 'apply') {
-  if (!scopeRoot) {
-    return;
-  }
-
-  const runtimeModule = globalThis.AURA_MODE_ENGINE_SCOPED_V2 || null;
-  const applyDarkSurfaceInlineOverrides = runtimeModule?.applyDarkSurfaceInlineOverrides;
-  if (typeof applyDarkSurfaceInlineOverrides !== 'function') {
-    return;
-  }
-
-  try {
-    applyDarkSurfaceInlineOverrides(scopeRoot);
-  } catch (error) {
-    modeEngineDebugLog(`Inline dark surface override failed (${source})`, error);
-  }
-}
-
-function clearDarkSurfaceInlineOverridesSafe(source = 'cleanup') {
-  const runtimeModule = globalThis.AURA_MODE_ENGINE_SCOPED_V2 || null;
-  const clearDarkSurfaceInlineOverrides = runtimeModule?.clearDarkSurfaceInlineOverrides;
-  if (typeof clearDarkSurfaceInlineOverrides !== 'function') {
-    return;
-  }
-
-  try {
-    clearDarkSurfaceInlineOverrides();
-  } catch (error) {
-    modeEngineDebugLog(`Inline dark surface cleanup failed (${source})`, error);
-  }
-}
-
-function clearDarkSurfaceTagsSafe(scopeRoot, source = 'cleanup') {
-  if (!scopeRoot) {
-    return;
-  }
-
-  const runtimeModule = globalThis.AURA_MODE_ENGINE_SCOPED_V2 || null;
-  const clearDarkSurfaceTags = runtimeModule?.clearDarkSurfaceTags;
-  if (typeof clearDarkSurfaceTags !== 'function') {
-    return;
-  }
-
-  try {
-    clearDarkSurfaceTags(scopeRoot, DARK_SURFACE_SCAN_BUDGET);
-  } catch (error) {
-    modeEngineDebugLog(`Dark surface cleanup failed (${source})`, error);
-  }
-}
-
-function clearDarkInlineSliceTimers() {
-  if (darkInlineSliceTimers.length) {
-    darkInlineSliceTimers.forEach((timerId) => clearTimeout(timerId));
-  }
-  darkInlineSliceTimers = [];
-}
-
-function clearDarkInitialApplyTimers() {
-  if (darkInitialApplyTimers.length) {
-    darkInitialApplyTimers.forEach((timerId) => {
-      if (timerId?.type === 'idle' && typeof cancelIdleCallback === 'function') {
-        cancelIdleCallback(timerId.id);
-        return;
-      }
-      clearTimeout(timerId.id);
-    });
-  }
-  darkInitialApplyTimers = [];
-}
-
-function stopDarkInitialApplyPasses() {
-  clearDarkInitialApplyTimers();
-  darkInitialApplyPassCount = 0;
-  darkInitialApplyScopeRoot = null;
-}
-
-function shouldRunDarkInitialPass(scopeRoot) {
-  if (!scopeRoot || !scopeRoot.isConnected) {
-    return false;
-  }
-
-  if (darkInitialApplyScopeRoot && darkInitialApplyScopeRoot !== scopeRoot) {
-    return false;
-  }
-
-  return getModeActive(MODE_IDS.COMFORT_VISUAL) !== false;
-}
-
-function scheduleDarkInitialPass(scopeRoot, delayMs, source, budget) {
-  const runPass = () => {
-    if (!shouldRunDarkInitialPass(scopeRoot)) {
-      return;
-    }
-    darkInitialApplyPassCount += 1;
-    applyDarkSurfaceTagsSafe(scopeRoot, source, budget);
-  };
-
-  if (typeof requestIdleCallback === 'function') {
-    const idleId = requestIdleCallback(runPass, { timeout: delayMs + 200 });
-    darkInitialApplyTimers.push({ type: 'idle', id: idleId });
-    return;
-  }
-
-  const timerId = setTimeout(runPass, delayMs);
-  darkInitialApplyTimers.push({ type: 'timeout', id: timerId });
-}
-
-function scheduleDarkInitialApplyPasses(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  stopDarkInitialApplyPasses();
-  darkInitialApplyScopeRoot = scopeRoot;
-
-  applyDarkSurfaceTagsSafe(scopeRoot, 'apply-initial', DARK_SURFACE_INITIAL_SCAN_BUDGET);
-
-  for (let i = 0; i < DARK_SURFACE_INITIAL_EXTRA_PASSES; i += 1) {
-    const delayMs = DARK_SURFACE_INITIAL_PASS_DELAYS_MS[i] || 0;
-    scheduleDarkInitialPass(scopeRoot, delayMs, 'apply-initial-pass', DARK_SURFACE_INITIAL_EXTRA_BUDGET);
-  }
-}
-
-function stopDarkObservers() {
-  if (darkInlineObserver) {
-    darkInlineObserver.disconnect();
-  }
-  darkInlineObserver = null;
-  darkInlineObservedScopeRoot = null;
-
-  if (darkInlineDebounceTimer) {
-    clearTimeout(darkInlineDebounceTimer);
-  }
-  darkInlineDebounceTimer = null;
-
-  if (darkInlineThrottleTimer) {
-    clearTimeout(darkInlineThrottleTimer);
-  }
-  darkInlineThrottleTimer = null;
-
-  clearDarkInlineSliceTimers();
-  darkInlineNextAllowedAt = 0;
-}
-
-function runDarkInlineRescan(scopeRoot, source = 'observer') {
-  if (!scopeRoot) {
-    return;
-  }
-
-  const now = Date.now();
-  if (darkInlineNextAllowedAt && now < darkInlineNextAllowedAt) {
-    if (!darkInlineThrottleTimer) {
-      const waitMs = darkInlineNextAllowedAt - now;
-      darkInlineThrottleTimer = setTimeout(() => {
-        darkInlineThrottleTimer = null;
-        runDarkInlineRescan(scopeRoot, source);
-      }, waitMs);
-    }
-    return;
-  }
-
-  darkInlineNextAllowedAt = now + DARK_INLINE_RESCAN_MIN_INTERVAL_MS;
-  applyDarkSurfaceInlineOverridesSafe(scopeRoot, source);
-}
-
-function scheduleDarkInlineDebouncedRescan(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  if (darkInlineDebounceTimer) {
-    clearTimeout(darkInlineDebounceTimer);
-  }
-
-  darkInlineDebounceTimer = setTimeout(() => {
-    darkInlineDebounceTimer = null;
-    runDarkInlineRescan(scopeRoot, 'observer');
-  }, DARK_INLINE_DEBOUNCE_MS);
-}
-
-function scheduleDarkInlineSliceRescans(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  clearDarkInlineSliceTimers();
-
-  DARK_INLINE_RESCAN_DELAYS_MS.forEach((delayMs) => {
-    const timerId = setTimeout(() => {
-      darkInlineSliceTimers = darkInlineSliceTimers.filter((entry) => entry !== timerId);
-      runDarkInlineRescan(scopeRoot, 'slice');
-    }, delayMs);
-    darkInlineSliceTimers.push(timerId);
-  });
-}
-
-function startDarkObservers(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  if (darkInlineObserver && darkInlineObservedScopeRoot === scopeRoot) {
-    return;
-  }
-
-  stopDarkObservers();
-  darkInlineObservedScopeRoot = scopeRoot;
-
-  try {
-    darkInlineObserver = new MutationObserver(() => {
-      scheduleDarkInlineDebouncedRescan(scopeRoot);
-    });
-    darkInlineObserver.observe(scopeRoot, { childList: true, subtree: true, attributes: false });
-  } catch (error) {
-    modeEngineDebugLog('Inline dark surface observer failed', error);
-    stopDarkObservers();
-  }
-}
-
-function teardownDarkObserver() {
-  if (darkObserver) {
-    darkObserver.disconnect();
-  }
-  darkObserver = null;
-  darkObservedScopeRoot = null;
-
-  if (darkRescanTimer) {
-    clearTimeout(darkRescanTimer);
-  }
-  darkRescanTimer = null;
-  darkRescanCount = 0;
-  darkRescanWindowStart = 0;
-}
-
-function performDarkRescan(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  const now = Date.now();
-  if (!canPerformDarkRescan(now)) {
-    return;
-  }
-
-  darkRescanCount += 1;
-  applyDarkSurfaceTagsSafe(scopeRoot, 'observer');
-}
-
-function scheduleDarkRescan(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  if (darkRescanTimer) {
-    clearTimeout(darkRescanTimer);
-  }
-  darkRescanTimer = setTimeout(() => {
-    darkRescanTimer = null;
-    performDarkRescan(scopeRoot);
-  }, DARK_SURFACE_DEBOUNCE_MS);
-}
-
-function ensureDarkObserver(scopeRoot) {
-  if (!scopeRoot) {
-    return;
-  }
-
-  if (darkObserver && darkObservedScopeRoot === scopeRoot) {
-    return;
-  }
-
-  teardownDarkObserver();
-  darkObservedScopeRoot = scopeRoot;
-
-  try {
-    darkObserver = new MutationObserver(() => {
-      scheduleDarkRescan(scopeRoot);
-    });
-    darkObserver.observe(scopeRoot, { childList: true, subtree: true, attributes: false });
-  } catch (error) {
-    modeEngineDebugLog('Dark surface observer failed', error);
-    teardownDarkObserver();
-  }
+  return Object.fromEntries(
+    Object.entries(tokenMap || {}).filter(([key]) => !DARK_COMFORT_THEME_TOKEN_KEYS.has(key)),
+  );
 }
 
 async function applyScopeTokensToStoredRoot(tokenMap = {}, ownerKey = MODE_ENGINE_SCOPE_OWNER, options = {}) {
@@ -2426,7 +2729,9 @@ async function cleanupScopeTokensFromStoredRoot(ownerKey = MODE_ENGINE_SCOPE_OWN
     return { ok: false, error: 'TOKEN_APPLY_FAILED', detail: 'cleanupScopedTokens missing' };
   }
 
-  const ownedKeys = Array.isArray(AURA?.modeEngineScopeTokens) ? AURA.modeEngineScopeTokens : [];
+  const ownedKeys = Array.isArray(options?.ownedKeys)
+    ? options.ownedKeys
+    : (Array.isArray(AURA?.modeEngineScopeTokens) ? AURA.modeEngineScopeTokens : []);
   const result = cleanupScopedTokens(scopeRoot, ownerKey, ownedKeys, options);
   if (!result?.ok && result?.reason === 'not-owner') {
     const removedKeys = ownedKeys.filter((token) => {
@@ -2698,14 +3003,17 @@ async function selectScopeRoot(doc, level = 'conservative', budgetMs = SMARTSCOP
 
 let focusOverlayController = null;
 let focusOverlayPrefsListenerAttached = false;
+let focusOverlayPrefsListener = null;
 const FOCUS_OVERLAY_DEFAULT_ALPHA = 0.2;
+const FOCUS_OVERLAY_DEFAULT_BLUR_PX = 0;
 const READING_RULER_DEFAULT_HEIGHT_PX = 120;
 const READING_RULER_DEFAULT_OPACITY = 0.12;
-const FOCUS_OVERLAY_EVENT_NAME = 'aura:focusOverlay:set';
-const READING_RULER_EVENT_NAME = 'aura:readingRuler:set';
-const ULTRA_FOCUS_EVENT_NAME = 'aura:ultraFocus:set';
-const ULTRA_FOCUS_LOCK_EVENT_NAME = 'aura:ultraFocus:lock';
+const READING_RULER_DEFAULT_BLUR_PX = 0;
+const READING_RULER_DEFAULT_FEATHER_PX = 24;
 let readingRulerShortcutListenerAttached = false;
+let readingRulerExitListenerAttached = false;
+let readingRulerShortcutHandler = null;
+let readingRulerExitHandler = null;
 const FOCUS_NOT_OBSCURED_THRESHOLD_PX = 64;
 const FOCUS_NOT_OBSCURED_KEYBOARD_WINDOW_MS = 1200;
 const FOCUS_NOT_OBSCURED_REPEAT_WINDOW_MS = 800;
@@ -2715,17 +3023,6 @@ const TARGET_BOOST_MAX_ELEMENTS = 50;
 const TARGET_BOOST_SCAN_THROTTLE_MS = 200;
 const TARGET_BOOST_FOCUSABLE_SELECTOR =
   'a[href], button, input, select, textarea, summary, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
-const DARK_SURFACE_DEBOUNCE_MS = 350;
-const DARK_SURFACE_MAX_RESCANS_PER_MIN = 12;
-const DARK_SURFACE_RESCAN_WINDOW_MS = 60000;
-const DARK_SURFACE_SCAN_BUDGET = { maxNodes: 600, maxMs: 12 };
-const DARK_SURFACE_INITIAL_SCAN_BUDGET = { maxNodes: 2000, maxMs: 28 };
-const DARK_SURFACE_INITIAL_EXTRA_BUDGET = { maxNodes: 1200, maxMs: 18 };
-const DARK_SURFACE_INITIAL_EXTRA_PASSES = 2;
-const DARK_SURFACE_INITIAL_PASS_DELAYS_MS = [80, 240];
-const DARK_INLINE_DEBOUNCE_MS = 400;
-const DARK_INLINE_RESCAN_MIN_INTERVAL_MS = 1000;
-const DARK_INLINE_RESCAN_DELAYS_MS = [250, 800];
 const focusNotObscuredState = {
   enabled: false,
   reduceMotion: false,
@@ -2743,24 +3040,24 @@ const targetBoostState = {
   scanTimer: null,
   boostedElements: new Set(),
 };
-let darkObserver = null;
-let darkRescanTimer = null;
-let darkRescanWindowStart = 0;
-let darkRescanCount = 0;
-let darkObservedScopeRoot = null;
-let darkInlineObserver = null;
-let darkInlineDebounceTimer = null;
-let darkInlineThrottleTimer = null;
-let darkInlineSliceTimers = [];
-let darkInlineObservedScopeRoot = null;
-let darkInlineNextAllowedAt = 0;
-let darkInitialApplyScopeRoot = null;
-let darkInitialApplyPassCount = 0;
-let darkInitialApplyTimers = [];
 const runtimeModeState = {
   activeModes: {},
   prefs: null,
 };
+let focusRuntimeIntentRevision = 0;
+
+function beginFocusRuntimeIntent() {
+  focusRuntimeIntentRevision += 1;
+  const revision = focusRuntimeIntentRevision;
+  return {
+    revision,
+    isCurrent: () => revision === focusRuntimeIntentRevision && !AURA_CONTEXT_INVALIDATED,
+  };
+}
+
+function isFocusRuntimeIntentCurrent(intent) {
+  return !intent || intent.isCurrent();
+}
 
 function setRuntimePrefs(nextPrefs) {
   if (nextPrefs && typeof nextPrefs === 'object' && !Array.isArray(nextPrefs)) {
@@ -2813,8 +3110,8 @@ function hideSuggestionBannerIfPresent() {
   if (activeBanner?.destroy) {
     activeBanner.destroy();
   } else {
-    const host = document.getElementById('aura-suggestion-banner');
-    if (host && host.parentNode) {
+    const host = findOwnedAuraUiHost(SUGGESTION_BANNER_OWNER);
+    if (host?.parentNode) {
       host.parentNode.removeChild(host);
     }
   }
@@ -2856,6 +3153,14 @@ function normalizeFocusOverlayAlpha(value, fallback = FOCUS_OVERLAY_DEFAULT_ALPH
   return numeric;
 }
 
+function normalizeFocusOverlayBlurPx(value, fallback = FOCUS_OVERLAY_DEFAULT_BLUR_PX) {
+  const numeric = clampNumber(value, 0, 24);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric;
+}
+
 function getUserPrefsStorageKey() {
   return STORAGE_KEYS?.USER_PREFS || 'userPrefs';
 }
@@ -2864,7 +3169,7 @@ function normalizeFocusModePrefs(rawModePrefs) {
   const focusModeId = MODE_IDS.FOCUS || 'focus';
   const defaults =
     (MODE_PREFS_DEFAULTS && MODE_PREFS_DEFAULTS[focusModeId]) ||
-    { distractionDim: false, ultraFocus: false, targetBoost: false, reduceMotion: false, readingRuler: false };
+    { distractionDim: false, targetBoost: false, reduceMotion: false, readingRuler: false };
   const focusPrefs =
     rawModePrefs && typeof rawModePrefs === 'object' && !Array.isArray(rawModePrefs)
       ? rawModePrefs[focusModeId]
@@ -2892,6 +3197,22 @@ function normalizeReadingRulerHeight(value, fallback = READING_RULER_DEFAULT_HEI
 
 function normalizeReadingRulerOpacity(value, fallback = READING_RULER_DEFAULT_OPACITY) {
   const numeric = clampNumber(value, 0, 0.6);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric;
+}
+
+function normalizeReadingRulerBlurPx(value, fallback = READING_RULER_DEFAULT_BLUR_PX) {
+  const numeric = clampNumber(value, 0, 24);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric;
+}
+
+function normalizeReadingRulerFeatherPx(value, fallback = READING_RULER_DEFAULT_FEATHER_PX) {
+  const numeric = clampNumber(value, 0, 120);
   if (!Number.isFinite(numeric)) {
     return fallback;
   }
@@ -2926,6 +3247,133 @@ async function loadTargetBoostPrefs() {
     return { enabled: false };
   }
 }
+
+function isSearchLikeLocation() {
+  try {
+    const loc = document?.location || {};
+    const pathname = String(loc.pathname || '').toLowerCase();
+    const search = String(loc.search || '').toLowerCase();
+    return pathname.includes('/search') || search.includes('q=') || search.includes('query=');
+  } catch (_) {
+    return false;
+  }
+}
+
+function isSimpleFormSurface(scopeEl) {
+  if (!scopeEl || typeof scopeEl.querySelectorAll !== 'function') {
+    return false;
+  }
+
+  try {
+    const formCount = scopeEl.querySelectorAll('form, [role="form"]').length;
+    const fieldCount = scopeEl.querySelectorAll('input, textarea, select, button').length;
+    const tableCount = scopeEl.querySelectorAll('table, [role="table"], [role="grid"]').length;
+    return formCount > 0 && fieldCount > 0 && tableCount === 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isTargetBoostAllowedBySignals(signals) {
+  if (!signals || signals.stats?.budgetHit === true) {
+    return false;
+  }
+
+  const hints = signals.pageHints || {};
+  if (hints.modalLikeCount > 0 || hints.tableCount > 0) {
+    return false;
+  }
+  if (typeof hints.smallTargetCount === 'number' && hints.smallTargetCount <= 0) {
+    return false;
+  }
+
+  if (hints.urlKind === 'SEARCH') {
+    return true;
+  }
+
+  const blocks = Array.isArray(signals.blocks) ? signals.blocks : [];
+  const hasFormBlock = blocks.some((block) => block?.roleHint === 'FORM');
+  return hints.formCount > 0 && hasFormBlock;
+}
+
+function isTargetBoostAllowedSurface(scopeEl) {
+  const adapter = globalThis.AURA_PAGE_SIGNALS_ADAPTER_V1;
+  const collector = adapter?.collectPageSignalsV1;
+  if (typeof collector === 'function') {
+    try {
+      return isTargetBoostAllowedBySignals(collector({
+        doc: document,
+        frameId: 0,
+        budgetMs: 8,
+        maxBlocks: 8,
+        maxNodes: 800,
+        maxCandidatesSeen: 120,
+      }));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  return isSearchLikeLocation() || isSimpleFormSurface(scopeEl);
+}
+
+const READING_RULER_BLOCKED_URL_KINDS = new Set(['DASHBOARD', 'VIDEO', 'WEB_APP', 'UNKNOWN']);
+const READING_RULER_BLOCKED_ROLE_HINTS = new Set(['PLAYER', 'TABLE']);
+
+function isReadingRulerAllowedBySignals(signals) {
+  if (!signals || typeof signals !== 'object') {
+    return true;
+  }
+
+  if (signals.stats?.budgetHit === true) {
+    return false;
+  }
+
+  const hints = signals.pageHints || {};
+  if (READING_RULER_BLOCKED_URL_KINDS.has(hints.urlKind)) {
+    return false;
+  }
+  if (hints.modalLikeCount > 0) {
+    return false;
+  }
+
+  const metrics = signals.aggregateMetrics || {};
+  if (hints.tableCount > 1 || metrics.tableDensity > 0.35 || metrics.interactiveDensity > 0.65) {
+    return false;
+  }
+
+  const blocks = Array.isArray(signals.blocks) ? signals.blocks : [];
+  return !blocks.some((block) => {
+    if (READING_RULER_BLOCKED_ROLE_HINTS.has(block?.roleHint)) {
+      return true;
+    }
+    const blockMetrics = block?.metrics || {};
+    return blockMetrics.tableDensity > 0.5 || blockMetrics.mediaDensity > 0.45;
+  });
+}
+
+function isReadingRulerAllowedSurface() {
+  const adapter = globalThis.AURA_PAGE_SIGNALS_ADAPTER_V1;
+  const collector = adapter?.collectPageSignalsV1;
+  if (typeof collector !== 'function') {
+    return false;
+  }
+
+  try {
+    return isReadingRulerAllowedBySignals(collector({
+      doc: document,
+      frameId: 0,
+      budgetMs: 8,
+      maxBlocks: 8,
+      maxNodes: 800,
+      maxCandidatesSeen: 120,
+    }));
+  } catch (_) {
+    return false;
+  }
+}
+
+setAuraTestHook('__TEST_IS_READING_RULER_ALLOWED_BY_SIGNALS__', isReadingRulerAllowedBySignals);
 
 function clearTargetBoostedElements() {
   targetBoostState.boostedElements.forEach((element) => {
@@ -2969,7 +3417,7 @@ function isElementSmallTarget(element) {
     return false;
   }
 
-  return rect.width < TARGET_BOOST_MIN_SIZE_PX && rect.height < TARGET_BOOST_MIN_SIZE_PX;
+  return rect.width < TARGET_BOOST_MIN_SIZE_PX || rect.height < TARGET_BOOST_MIN_SIZE_PX;
 }
 
 function isNavigationContainer(element, scopeRoot) {
@@ -3147,7 +3595,11 @@ function ensureTargetBoostObserver(scopeEl) {
   targetBoostState.observer = observer;
 }
 
-async function handleTargetBoostStateChange(scopeEl = null, flagsOverride = null) {
+async function handleTargetBoostStateChange(scopeEl = null, flagsOverride = null, intent = null) {
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (AURA_CONTEXT_INVALIDATED || typeof CURRENT_TAB_ID !== 'number') {
     stopTargetBoost();
     return;
@@ -3160,6 +3612,10 @@ async function handleTargetBoostStateChange(scopeEl = null, flagsOverride = null
 
   const [prefs, focusActive] = await Promise.all([loadTargetBoostPrefs(), isFocusModeActive()]);
 
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (!focusActive || !prefs.enabled) {
     stopTargetBoost();
     return;
@@ -3167,6 +3623,11 @@ async function handleTargetBoostStateChange(scopeEl = null, flagsOverride = null
 
   const targetScope = scopeEl || getActiveScopeRoot();
   if (!targetScope) {
+    stopTargetBoost();
+    return;
+  }
+
+  if (!isTargetBoostAllowedSurface(targetScope)) {
     stopTargetBoost();
     return;
   }
@@ -3186,6 +3647,8 @@ async function loadFocusOverlayPrefs() {
     return {
       distractionDim: false,
       alpha: FOCUS_OVERLAY_DEFAULT_ALPHA,
+      blurPx: FOCUS_OVERLAY_DEFAULT_BLUR_PX,
+      reduceMotion: prefersReducedMotion(),
     };
   }
 
@@ -3194,15 +3657,20 @@ async function loadFocusOverlayPrefs() {
     const focusModeId = MODE_IDS.FOCUS || 'focus';
     const modePrefs = normalizeFocusModePrefs(userPrefs.modePrefs);
     const rawAlpha = userPrefs.focusOverlayAlpha ?? userPrefs?.modePrefs?.[focusModeId]?.distractionDimAlpha;
+    const rawBlurPx = userPrefs.focusOverlayBlurPx ?? userPrefs?.modePrefs?.[focusModeId]?.distractionDimBlurPx;
 
     return {
       distractionDim: modePrefs.distractionDim === true,
       alpha: normalizeFocusOverlayAlpha(rawAlpha, FOCUS_OVERLAY_DEFAULT_ALPHA),
+      blurPx: normalizeFocusOverlayBlurPx(rawBlurPx, FOCUS_OVERLAY_DEFAULT_BLUR_PX),
+      reduceMotion: userPrefs.reducedMotion === true || modePrefs.reduceMotion === true || prefersReducedMotion(),
     };
   } catch (error) {
     return {
       distractionDim: false,
       alpha: FOCUS_OVERLAY_DEFAULT_ALPHA,
+      blurPx: FOCUS_OVERLAY_DEFAULT_BLUR_PX,
+      reduceMotion: prefersReducedMotion(),
     };
   }
 }
@@ -3237,6 +3705,9 @@ async function loadReadingRulerPrefs() {
       enabled: false,
       heightPx: READING_RULER_DEFAULT_HEIGHT_PX,
       opacity: READING_RULER_DEFAULT_OPACITY,
+      blurPx: READING_RULER_DEFAULT_BLUR_PX,
+      featherPx: READING_RULER_DEFAULT_FEATHER_PX,
+      reduceMotion: prefersReducedMotion(),
     };
   }
 
@@ -3246,66 +3717,78 @@ async function loadReadingRulerPrefs() {
     const modePrefs = normalizeFocusModePrefs(userPrefs.modePrefs);
     const rawHeight = userPrefs.readingRulerHeightPx ?? userPrefs?.modePrefs?.[focusModeId]?.readingRulerHeightPx;
     const rawOpacity = userPrefs.readingRulerOpacity ?? userPrefs?.modePrefs?.[focusModeId]?.readingRulerOpacity;
+    const rawBlurPx = userPrefs.readingRulerBlurPx ?? userPrefs?.modePrefs?.[focusModeId]?.readingRulerBlurPx;
+    const rawFeatherPx = userPrefs.readingRulerFeatherPx ?? userPrefs?.modePrefs?.[focusModeId]?.readingRulerFeatherPx;
 
-  return {
-    enabled: modePrefs.readingRuler === true,
-    heightPx: normalizeReadingRulerHeight(rawHeight, READING_RULER_DEFAULT_HEIGHT_PX),
-    opacity: normalizeReadingRulerOpacity(rawOpacity, READING_RULER_DEFAULT_OPACITY),
+    return {
+      enabled: modePrefs.readingRuler === true,
+      heightPx: normalizeReadingRulerHeight(rawHeight, READING_RULER_DEFAULT_HEIGHT_PX),
+      opacity: normalizeReadingRulerOpacity(rawOpacity, READING_RULER_DEFAULT_OPACITY),
+      blurPx: normalizeReadingRulerBlurPx(rawBlurPx, READING_RULER_DEFAULT_BLUR_PX),
+      featherPx: normalizeReadingRulerFeatherPx(rawFeatherPx, READING_RULER_DEFAULT_FEATHER_PX),
+      reduceMotion: userPrefs.reducedMotion === true || modePrefs.reduceMotion === true || prefersReducedMotion(),
     };
   } catch (error) {
     return {
       enabled: false,
       heightPx: READING_RULER_DEFAULT_HEIGHT_PX,
       opacity: READING_RULER_DEFAULT_OPACITY,
+      blurPx: READING_RULER_DEFAULT_BLUR_PX,
+      featherPx: READING_RULER_DEFAULT_FEATHER_PX,
+      reduceMotion: prefersReducedMotion(),
     };
   }
 }
 
 function dispatchFocusOverlayEvent(detail) {
   try {
-    window.dispatchEvent(new CustomEvent(FOCUS_OVERLAY_EVENT_NAME, { detail }));
+    const setState = globalThis.AURA_FOCUS_OVERLAY_V2?.setState;
+    if (typeof setState !== 'function') {
+      throw new Error('Focus overlay runtime bridge unavailable');
+    }
+    setState(detail);
   } catch (error) {
-    modeEngineDebugLog('Focus overlay event dispatch failed', error);
+    modeEngineDebugLog('Focus overlay state update failed', error);
   }
 }
 
 function dispatchReadingRulerEvent(detail) {
   try {
-    window.dispatchEvent(new CustomEvent(READING_RULER_EVENT_NAME, { detail }));
+    const setState = globalThis.AURA_READING_RULER?.setState;
+    if (typeof setState !== 'function') {
+      throw new Error('Reading ruler runtime bridge unavailable');
+    }
+    setState(detail);
   } catch (error) {
-    modeEngineDebugLog('Reading ruler event dispatch failed', error);
+    modeEngineDebugLog('Reading ruler state update failed', error);
   }
 }
 
 async function loadUltraFocusPrefs() {
-  if (!chrome?.storage?.local?.get) {
-    return { enabled: false };
-  }
-
-  try {
-    const stored = await chrome.storage.local.get(getUserPrefsStorageKey());
-    const userPrefs = stored?.[getUserPrefsStorageKey()] || {};
-    const modePrefs = normalizeFocusModePrefs(userPrefs.modePrefs);
-
-    return { enabled: modePrefs.ultraFocus === true };
-  } catch (error) {
-    return { enabled: false };
-  }
+  return { enabled: false };
 }
 
 function dispatchUltraFocusEvent(detail) {
   try {
-    window.dispatchEvent(new CustomEvent(ULTRA_FOCUS_EVENT_NAME, { detail }));
+    const setState = globalThis.AURA_ULTRA_FOCUS?.setState;
+    if (typeof setState !== 'function') {
+      throw new Error('Ultra Focus runtime bridge unavailable');
+    }
+    setState(detail);
   } catch (error) {
-    modeEngineDebugLog('Ultra focus event dispatch failed', error);
+    modeEngineDebugLog('Ultra focus state update failed', error);
   }
 }
 
 function dispatchUltraFocusLockEvent(detail) {
   try {
-    window.dispatchEvent(new CustomEvent(ULTRA_FOCUS_LOCK_EVENT_NAME, { detail }));
+    const setLock = globalThis.AURA_ULTRA_FOCUS?.setLock;
+    if (typeof setLock !== 'function') {
+      throw new Error('Ultra Focus runtime lock bridge unavailable');
+    }
+    setLock(detail);
   } catch (error) {
-    modeEngineDebugLog('Ultra focus lock event dispatch failed', error);
+    modeEngineDebugLog('Ultra focus lock update failed', error);
   }
 }
 
@@ -3331,6 +3814,14 @@ async function loadScopedVerifierModule() {
   const runtimeModule = globalThis.AURA_MODE_ENGINE_SCOPED_V2 || null;
   if (!runtimeModule) {
     modeEngineDebugLog('Scoped verifier runtime missing');
+  }
+  return runtimeModule;
+}
+
+async function loadDarkComfortThemeRuntimeModule() {
+  const runtimeModule = globalThis.AURA_DARK_COMFORT_THEME_RUNTIME || null;
+  if (!runtimeModule) {
+    modeEngineDebugLog('Dark Comfort Theme runtime missing');
   }
   return runtimeModule;
 }
@@ -3361,8 +3852,12 @@ async function loadUltraFocusModule() {
 
 async function ensureFocusOverlayController(options = {}) {
   if (focusOverlayController) {
-    if (options?.alpha !== undefined) {
-      focusOverlayController.setEnabled?.(true, { alpha: options.alpha });
+    if (options?.alpha !== undefined || options?.blurPx !== undefined || options?.transitionMs !== undefined) {
+      focusOverlayController.setEnabled?.(true, {
+        alpha: options.alpha,
+        blurPx: options.blurPx,
+        transitionMs: options.transitionMs,
+      });
     }
     return focusOverlayController;
   }
@@ -3433,7 +3928,11 @@ async function isFocusModeActive() {
   return response?.state?.state === 'ACTIVE';
 }
 
-async function handleFocusOverlayScopeChange(scopeEl = null, flagsOverride = null) {
+async function handleFocusOverlayScopeChange(scopeEl = null, flagsOverride = null, intent = null) {
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (!isFlagEnabledWithOverride('focusOverlayV2', flagsOverride)) {
     dispatchFocusOverlayEvent({ enabled: false, destroy: true });
     teardownFocusOverlayV2({ destroyRoot: true });
@@ -3441,6 +3940,10 @@ async function handleFocusOverlayScopeChange(scopeEl = null, flagsOverride = nul
   }
 
   const [prefs, focusActive] = await Promise.all([loadFocusOverlayPrefs(), isFocusModeActive()]);
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (!prefs.distractionDim || !focusActive) {
     dispatchFocusOverlayEvent({ enabled: false, destroy: true });
     teardownFocusOverlayV2({ destroyRoot: true });
@@ -3455,18 +3958,49 @@ async function handleFocusOverlayScopeChange(scopeEl = null, flagsOverride = nul
     return;
   }
 
-  dispatchFocusOverlayEvent({ enabled: true, alpha: prefs.alpha, scope: targetScope });
+  const transitionMs = prefs.reduceMotion ? 0 : undefined;
+  dispatchFocusOverlayEvent({
+    enabled: true,
+    alpha: prefs.alpha,
+    blurPx: prefs.blurPx,
+    transitionMs,
+    scope: targetScope,
+  });
 }
 
-async function handleReadingRulerStateChange() {
+async function handleReadingRulerStateChange(intent = null) {
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (AURA_CONTEXT_INVALIDATED || typeof CURRENT_TAB_ID !== 'number') {
     return;
   }
 
   await loadReadingRulerModule();
-  const [prefs, focusActive] = await Promise.all([loadReadingRulerPrefs(), isFocusModeActive()]);
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
 
-  if (!prefs.enabled || !focusActive) {
+  const [prefs, focusActive] = await Promise.all([loadReadingRulerPrefs(), isFocusModeActive()]);
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
+  const safeSurface = isReadingRulerAllowedSurface();
+  const readingRulerEnabled = prefs.enabled === true && focusActive === true && safeSurface === true;
+  setAuraTestHook('__TEST_READING_RULER_STATE__', {
+    enabled: readingRulerEnabled,
+    focusActive: focusActive === true,
+    safeSurface: safeSurface === true,
+    heightPx: prefs.heightPx,
+    opacity: prefs.opacity,
+    blurPx: prefs.blurPx,
+    featherPx: prefs.featherPx,
+    timestamp: Date.now(),
+  });
+
+  if (!readingRulerEnabled) {
     dispatchReadingRulerEvent({ enabled: false });
     return;
   }
@@ -3475,16 +4009,36 @@ async function handleReadingRulerStateChange() {
     enabled: true,
     heightPx: prefs.heightPx,
     opacity: prefs.opacity,
+    blurPx: prefs.blurPx,
+    featherPx: prefs.featherPx,
+    reduceMotion: prefs.reduceMotion,
   });
 }
 
-async function handleUltraFocusStateChange() {
+async function handleUltraFocusStateChange(flagsOverride = null, intent = null) {
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (AURA_CONTEXT_INVALIDATED || typeof CURRENT_TAB_ID !== 'number') {
     return;
   }
 
+  if (!isFlagEnabledWithOverride('ultraFocusV1', flagsOverride)) {
+    dispatchUltraFocusEvent({ enabled: false });
+    dispatchUltraFocusLockEvent({ lock: false });
+    return;
+  }
+
   await loadUltraFocusModule();
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   const [prefs, focusActive] = await Promise.all([loadUltraFocusPrefs(), isFocusModeActive()]);
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
 
   if (!prefs.enabled || !focusActive) {
     dispatchUltraFocusEvent({ enabled: false });
@@ -3496,7 +4050,7 @@ async function handleUltraFocusStateChange() {
 }
 
 function startFocusOverlayPrefsWatcher() {
-  if (focusOverlayPrefsListenerAttached) {
+  if (focusOverlayPrefsListenerAttached || !isTopFrameDocument()) {
     return;
   }
 
@@ -3506,7 +4060,7 @@ function startFocusOverlayPrefsWatcher() {
 
   focusOverlayPrefsListenerAttached = true;
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  focusOverlayPrefsListener = (changes, areaName) => {
     if (areaName !== 'local') {
       return;
     }
@@ -3521,53 +4075,61 @@ function startFocusOverlayPrefsWatcher() {
     applyFocusRuntime(nextPrefs).catch((error) => {
       modeEngineDebugLog('Focus runtime prefs refresh failed', error);
     });
+  };
+  chrome.storage.onChanged.addListener(focusOverlayPrefsListener);
+}
+
+function stopFocusOverlayPrefsWatcher() {
+  if (focusOverlayPrefsListener && chrome?.storage?.onChanged?.removeListener) {
+    chrome.storage.onChanged.removeListener(focusOverlayPrefsListener);
+  }
+  focusOverlayPrefsListener = null;
+  focusOverlayPrefsListenerAttached = false;
+}
+
+async function setReadingRulerPreference(nextValue, contextLabel = 'reading-ruler-set') {
+  if (!chrome?.runtime?.sendMessage) {
+    return;
+  }
+
+  const normalizedNextValue = nextValue === true;
+  const response = await safeSendMessage({
+    action: ACTIONS.PREFS_UPDATED,
+    preferencePatch: { readingRuler: normalizedNextValue },
+  }, { contextLabel });
+  if (!response?.ok || !response.prefs) {
+    throw new Error(response?.error || 'Reading ruler preference update failed');
+  }
+
+  const nextPrefs = response.prefs;
+  setRuntimePrefs(nextPrefs);
+
+  applyFocusRuntime(nextPrefs).catch((error) => {
+    modeEngineDebugLog('Reading ruler preference update failed', error);
   });
 }
 
 async function toggleReadingRulerPreference() {
-  if (!chrome?.storage?.local?.get || !chrome?.storage?.local?.set) {
+  if (!chrome?.storage?.local?.get) {
     return;
   }
 
   const prefsKey = getUserPrefsStorageKey();
   const stored = await chrome.storage.local.get(prefsKey);
   const userPrefs = stored?.[prefsKey] || {};
-  const focusModeId = MODE_IDS.FOCUS || 'focus';
   const currentModePrefs = normalizeFocusModePrefs(userPrefs.modePrefs);
-  const nextValue = currentModePrefs.readingRuler !== true;
-
-  const nextPrefs = {
-    ...userPrefs,
-    modePrefs: {
-      ...(userPrefs.modePrefs || {}),
-      [focusModeId]: {
-        ...currentModePrefs,
-        readingRuler: nextValue,
-      },
-    },
-  };
-
-  await chrome.storage.local.set({ [prefsKey]: nextPrefs });
-  setRuntimePrefs(nextPrefs);
-
-  if (typeof ACTIONS.PREFS_UPDATED === 'string') {
-    safeSendMessage({ action: ACTIONS.PREFS_UPDATED, prefs: nextPrefs }, { contextLabel: 'reading-ruler-toggle' });
-  }
-
-  handleReadingRulerStateChange().catch((error) => {
-    modeEngineDebugLog('Reading ruler toggle failed', error);
-  });
+  await setReadingRulerPreference(currentModePrefs.readingRuler !== true, 'reading-ruler-toggle');
 }
 
-function startReadingRulerShortcut() {
-  if (readingRulerShortcutListenerAttached) {
+function startReadingRulerRuntimeControls() {
+  if (readingRulerShortcutListenerAttached || !isTopFrameDocument()) {
     return;
   }
 
   readingRulerShortcutListenerAttached = true;
 
-  window.addEventListener('keydown', async (event) => {
-    if (!event || event.defaultPrevented) {
+  readingRulerShortcutHandler = async (event) => {
+    if (!event || event.isTrusted !== true || event.defaultPrevented) {
       return;
     }
 
@@ -3577,7 +4139,7 @@ function startReadingRulerShortcut() {
     }
 
     const focusActive = await isFocusModeActive();
-    if (!focusActive) {
+    if (AURA_CONTEXT_INVALIDATED || !focusActive) {
       return;
     }
 
@@ -3585,7 +4147,39 @@ function startReadingRulerShortcut() {
     toggleReadingRulerPreference().catch((error) => {
       modeEngineDebugLog('Reading ruler shortcut failed', error);
     });
-  });
+  };
+  window.addEventListener('keydown', readingRulerShortcutHandler);
+
+  if (!readingRulerExitListenerAttached) {
+    const onExit = globalThis.AURA_READING_RULER?.onExit;
+    if (typeof onExit === 'function') {
+      readingRulerExitListenerAttached = true;
+      readingRulerExitHandler = () => {
+        setReadingRulerPreference(false, 'reading-ruler-exit').catch((error) => {
+          modeEngineDebugLog('Reading ruler exit failed', error);
+        });
+      };
+      onExit(readingRulerExitHandler);
+    }
+  }
+}
+
+function stopReadingRulerRuntimeControls() {
+  if (readingRulerShortcutHandler) {
+    window.removeEventListener('keydown', readingRulerShortcutHandler);
+  }
+  readingRulerShortcutHandler = null;
+  readingRulerShortcutListenerAttached = false;
+
+  if (readingRulerExitListenerAttached) {
+    try {
+      globalThis.AURA_READING_RULER?.onExit?.(null);
+    } catch (error) {
+      modeEngineDebugLog('Reading ruler exit teardown failed', error);
+    }
+  }
+  readingRulerExitHandler = null;
+  readingRulerExitListenerAttached = false;
 }
 
 function attachFocusNotObscuredListeners() {
@@ -3698,7 +4292,11 @@ function detachFocusNotObscuredListeners() {
   focusNotObscuredState.lastKeyboardAt = 0;
 }
 
-async function handleFocusNotObscuredStateChange() {
+async function handleFocusNotObscuredStateChange(intent = null) {
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
+
   if (AURA_CONTEXT_INVALIDATED || typeof CURRENT_TAB_ID !== 'number') {
     focusNotObscuredState.enabled = false;
     detachFocusNotObscuredListeners();
@@ -3706,6 +4304,9 @@ async function handleFocusNotObscuredStateChange() {
   }
 
   const [prefs, focusActive] = await Promise.all([loadFocusNotObscuredPrefs(), isFocusModeActive()]);
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
+  }
 
   if (!focusActive || !prefs.enabled) {
     focusNotObscuredState.enabled = false;
@@ -3729,18 +4330,41 @@ function cleanupFocusRuntime() {
   detachFocusNotObscuredListeners();
 }
 
-async function applyFocusSubmodes(focusState, prefsOverride = null, flagsOverride = null, scopeRoot = null) {
+function normalizeFocusPrefsOverride(focusPrefs) {
+  if (!focusPrefs || typeof focusPrefs !== 'object' || Array.isArray(focusPrefs)) {
+    return null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(focusPrefs, 'modePrefs')) {
+    return focusPrefs;
+  }
+
+  const focusModeId = MODE_IDS.FOCUS || 'focus';
+  return {
+    modePrefs: {
+      [focusModeId]: focusPrefs,
+    },
+  };
+}
+
+async function applyFocusSubmodes({ isFocusActive, focusPrefs, flags, scopeRoot } = {}) {
+  const intent = beginFocusRuntimeIntent();
   if (AURA_CONTEXT_INVALIDATED) {
     return;
   }
 
-  if (prefsOverride) {
-    setRuntimePrefs(prefsOverride);
+  const normalizedPrefs = normalizeFocusPrefsOverride(focusPrefs);
+  if (normalizedPrefs) {
+    setRuntimePrefs(normalizedPrefs);
   }
 
-  let focusActive = focusState;
+  let focusActive = isFocusActive;
   if (typeof focusActive !== 'boolean') {
     focusActive = await isFocusModeActive();
+  }
+
+  if (!isFocusRuntimeIntentCurrent(intent)) {
+    return;
   }
 
   if (focusActive === false) {
@@ -3748,18 +4372,22 @@ async function applyFocusSubmodes(focusState, prefsOverride = null, flagsOverrid
     return;
   }
 
-  await handleFocusOverlayScopeChange(scopeRoot, flagsOverride);
-  await handleReadingRulerStateChange();
-  await handleUltraFocusStateChange();
-  await handleFocusNotObscuredStateChange();
-  await handleTargetBoostStateChange(scopeRoot, flagsOverride);
+  await handleFocusOverlayScopeChange(scopeRoot, flags, intent);
+  if (!isFocusRuntimeIntentCurrent(intent)) return;
+  await handleReadingRulerStateChange(intent);
+  if (!isFocusRuntimeIntentCurrent(intent)) return;
+  await handleUltraFocusStateChange(flags, intent);
+  if (!isFocusRuntimeIntentCurrent(intent)) return;
+  await handleFocusNotObscuredStateChange(intent);
+  if (!isFocusRuntimeIntentCurrent(intent)) return;
+  await handleTargetBoostStateChange(scopeRoot, flags, intent);
 }
 
 async function applyFocusRuntime(prefsOverride = null) {
   const focusModeId = MODE_IDS.FOCUS || 'focus';
   const focusActive = getModeActive(focusModeId);
   const flags = typeof getAllModeEngineFlags === 'function' ? getAllModeEngineFlags() : null;
-  await applyFocusSubmodes(focusActive, prefsOverride, flags);
+  await applyFocusSubmodes({ isFocusActive: focusActive, focusPrefs: prefsOverride, flags });
 }
 
 async function selectScopeRootV2(doc, level = 'conservative', budgetMs = SMARTSCOPE_TIMEOUT_MS) {
@@ -4321,9 +4949,9 @@ class PageProfilerV1 {
 const pageProfilerV1 = new PageProfilerV1();
 
 const SPA_HOOKS_REAPPLY_POLICY = {
-  debounceMs: 200,
-  maxWaitMs: 800,
-  cooldownMs: 1200,
+  debounceMs: 80,
+  maxWaitMs: 350,
+  cooldownMs: 800,
   rateLimitWindowMs: 5000,
   maxRunsPerWindow: 5,
   modalDeferPolicy: { maxAttempts: 3, maxWindowMs: 5000, baseDelayMs: 200 },
@@ -4333,6 +4961,7 @@ const SPA_HOOKS_RUNTIME_STATE = {
   scheduler: null,
   handler: null,
   active: false,
+  lastObservedUrl: null,
 };
 
 let didLogSpaHooksMissing = false;
@@ -4411,6 +5040,7 @@ function createSpaHooksScheduler() {
     lastReason = reason;
     clearTimers();
 
+    rearmSignalDetectors(lastReason);
     requestV2Reapply(lastReason);
   };
 
@@ -4508,12 +5138,41 @@ function handleSpaNavEvent(event) {
     return;
   }
 
+  const currentUrl = String(globalThis.location?.href || '');
+  const announcedUrl = typeof event.detail.url === 'string' ? event.detail.url : currentUrl;
+  if (!currentUrl || announcedUrl !== currentUrl || SPA_HOOKS_RUNTIME_STATE.lastObservedUrl === currentUrl) {
+    return;
+  }
+  SPA_HOOKS_RUNTIME_STATE.lastObservedUrl = currentUrl;
+
   const rawKind = event.detail.kind;
   const kind = typeof rawKind === 'string' && rawKind.trim() ? rawKind.trim() : 'nav';
   scheduler.schedule(`spa:${kind}`);
 }
 
+function rearmSignalDetectors(reason = 'spa') {
+  if (AURA_CONTEXT_INVALIDATED) {
+    return;
+  }
+
+  if (!activeSignalEngine || !Array.isArray(activeDetectors) || activeDetectors.length === 0) {
+    return;
+  }
+
+  activeSignalEngine.resetBaseline?.(reason);
+  activeDetectors.forEach((detector) => {
+    if (typeof detector?.rearm === 'function') {
+      detector.rearm(reason);
+    }
+  });
+}
+
 async function startSpaHooksV2IfEnabled() {
+  if (!isTopFrameDocument()) {
+    stopSpaHooksV2IfRunning();
+    return;
+  }
+
   if (!isFlagEnabled('smartScopeSpaHooks')) {
     stopSpaHooksV2IfRunning();
     return;
@@ -4532,6 +5191,7 @@ async function startSpaHooksV2IfEnabled() {
     window.addEventListener('aura:spa-nav', handleSpaNavEvent, true);
     SPA_HOOKS_RUNTIME_STATE.active = true;
     SPA_HOOKS_RUNTIME_STATE.handler = handleSpaNavEvent;
+    SPA_HOOKS_RUNTIME_STATE.lastObservedUrl = String(globalThis.location?.href || '');
   } catch (error) {
     modeEngineDebugLog('SPA hooks v2 start failed', error);
   }
@@ -4548,6 +5208,7 @@ function stopSpaHooksV2IfRunning() {
 
   SPA_HOOKS_RUNTIME_STATE.active = false;
   SPA_HOOKS_RUNTIME_STATE.handler = null;
+  SPA_HOOKS_RUNTIME_STATE.lastObservedUrl = null;
 
   if (SPA_HOOKS_RUNTIME_STATE.scheduler) {
     SPA_HOOKS_RUNTIME_STATE.scheduler.cancel?.();
@@ -4556,7 +5217,7 @@ function stopSpaHooksV2IfRunning() {
 }
 
 async function maybeRunModeEngineV2() {
-  if (BOOTSTRAP_ABORTED) {
+  if (BOOTSTRAP_ABORTED || AURA_CONTEXT_INVALIDATED) {
     return;
   }
 
@@ -4598,17 +5259,11 @@ async function maybeRunModeEngineV2() {
 
   startSpaHooksV2IfEnabled();
 
-  // TODO(PR1): Guardrails integration point
-  // TODO(PR2): SmartScope v2 orchestration
-  // TODO(PR3): Scoped CSS v2 application
-  // TODO(PR4): Focus overlay v2 entry
-  // TODO(PR5): SPA hooks v2 wiring
-
   if (flags.focusOverlayV2) {
     startFocusOverlayPrefsWatcher();
   }
 
-  applyFocusSubmodes(null, null, flags).catch((error) => {
+  applyFocusSubmodes({ flags }).catch((error) => {
     modeEngineDebugLog('Focus runtime entry failed', error);
   });
 }
@@ -4624,11 +5279,14 @@ function init() {
     return;
   }
 
+  const signalEngine = new SignalEngine(CURRENT_TAB_ID);
   const zoomDetector = new ZoomDetector(CURRENT_TAB_ID);
-  const colorSchemeDetector = new ColorSchemeDetector(CURRENT_TAB_ID);
-  const readingBehaviorDetector = new ReadingBehaviorDetector(CURRENT_TAB_ID);
+  const colorSchemeDetector = new ColorSchemeDetector(CURRENT_TAB_ID, signalEngine);
+  const visualViewportDetector = new VisualViewportDetector(CURRENT_TAB_ID, signalEngine);
+  const readingBehaviorDetector = new ReadingBehaviorDetector(CURRENT_TAB_ID, signalEngine);
 
-  activeDetectors = [zoomDetector, colorSchemeDetector, readingBehaviorDetector];
+  activeSignalEngine = signalEngine;
+  activeDetectors = [zoomDetector, colorSchemeDetector, visualViewportDetector, readingBehaviorDetector];
 }
 
 function toKebabCase(value) {
@@ -4727,320 +5385,946 @@ function evaluateComputedStyles(checks = []) {
   return { allPassed, results };
 }
 
+const smartScopeClassTokens = new Map();
+
+function normalizeClassListValue(value) {
+  if (typeof value !== 'string') {
+    return [];
+  }
+  return value
+    .split(/\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function addClassName(element, className) {
+  if (!element?.classList || !className) {
+    return false;
+  }
+
+  if (typeof element.classList.add === 'function') {
+    element.classList.add(className);
+    return true;
+  }
+
+  return false;
+}
+
+function removeClassName(element, className) {
+  if (!element?.classList || !className) {
+    return false;
+  }
+
+  if (typeof element.classList.remove === 'function') {
+    element.classList.remove(className);
+    return true;
+  }
+
+  if (typeof element.classList.delete === 'function') {
+    return element.classList.delete(className);
+  }
+
+  return false;
+}
+
+function handleSmartScopeApplyClasses(message = {}) {
+  const token = typeof message.token === 'string' && message.token.trim() ? message.token.trim() : '';
+  const operations = Array.isArray(message.operations) ? message.operations : [];
+  if (!token || operations.length === 0) {
+    return { ok: false, error: 'INVALID_PAYLOAD' };
+  }
+
+  const appliedEntries = [];
+  const appliedClasses = [];
+  const errors = [];
+
+  operations.forEach((operation, index) => {
+    const selector = typeof operation?.selector === 'string' ? operation.selector.trim() : '';
+    if (!selector) {
+      errors.push({ index, error: 'MISSING_SELECTOR' });
+      return;
+    }
+
+    let elements = [];
+    try {
+      elements = Array.from(document.querySelectorAll(selector));
+    } catch (error) {
+      errors.push({ index, selector, error: error?.message || 'INVALID_SELECTOR' });
+      return;
+    }
+
+    if (elements.length === 0) {
+      errors.push({ index, selector, error: 'NO_MATCH' });
+      return;
+    }
+
+    const addClasses = Array.isArray(operation.add)
+      ? operation.add.flatMap(normalizeClassListValue)
+      : normalizeClassListValue(operation.add);
+    const removeClasses = Array.isArray(operation.remove)
+      ? operation.remove.flatMap(normalizeClassListValue)
+      : normalizeClassListValue(operation.remove);
+
+    elements.forEach((element) => {
+      const added = [];
+      addClasses.forEach((className) => {
+        if (addClassName(element, className)) {
+          added.push(className);
+          if (!appliedClasses.includes(className)) {
+            appliedClasses.push(className);
+          }
+        }
+      });
+      removeClasses.forEach((className) => {
+        removeClassName(element, className);
+      });
+      if (added.length > 0) {
+        appliedEntries.push({ element, classes: added });
+      }
+    });
+  });
+
+  if (appliedEntries.length === 0) {
+    return { ok: false, error: errors[0]?.error || 'APPLY_FAILED', errors };
+  }
+
+  smartScopeClassTokens.set(token, appliedEntries);
+  return { ok: true, token, applied: appliedClasses, errors };
+}
+
+function handleSmartScopeRemoveToken(message = {}) {
+  const token = typeof message.token === 'string' && message.token.trim() ? message.token.trim() : '';
+  if (!token) {
+    return { ok: false, error: 'INVALID_PAYLOAD', removed: 0 };
+  }
+
+  const entries = smartScopeClassTokens.get(token) || [];
+  let removed = 0;
+  entries.forEach((entry) => {
+    const classes = Array.isArray(entry?.classes) ? entry.classes : [];
+    classes.forEach((className) => {
+      if (removeClassName(entry.element, className)) {
+        removed += 1;
+      }
+    });
+  });
+  smartScopeClassTokens.delete(token);
+
+  return { ok: true, removed };
+}
+
+function handlePageSignalsCollect(message = {}) {
+  const adapter = globalThis.AURA_PAGE_SIGNALS_ADAPTER_V1;
+  const collector = adapter?.collectPageSignalsV1;
+  if (typeof collector !== 'function') {
+    return { ok: false, error: 'PAGE_SIGNALS_ADAPTER_UNAVAILABLE' };
+  }
+
+  try {
+    const signals = collector({
+      doc: document,
+      frameId: typeof message.frameId === 'number' ? message.frameId : 0,
+      budgetMs: typeof message.budgetMs === 'number' ? message.budgetMs : undefined,
+      maxBlocks: typeof message.maxBlocks === 'number' ? message.maxBlocks : undefined,
+      maxNodes: typeof message.maxNodes === 'number' ? message.maxNodes : undefined,
+      maxCandidatesSeen: typeof message.maxCandidatesSeen === 'number' ? message.maxCandidatesSeen : undefined,
+    });
+    return { ok: true, signals };
+  } catch (error) {
+    return { ok: false, error: 'PAGE_SIGNALS_COLLECT_FAILED', detail: error?.message || 'unknown' };
+  }
+}
+
+const PAGE_CLARITY_TARGET_ATTR = 'data-aura-page-clarity';
+const pageClarityMarkedTargets = new Set();
+const pageClarityEffectBaselines = new WeakMap();
+
+function normalizeRegionTargetRequest(message = {}) {
+  return {
+    schemaVersion: 1,
+    frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+    collectionEpoch: typeof message.collectionEpoch === 'string' ? message.collectionEpoch : '',
+    routeEpoch: typeof message.routeEpoch === 'string' ? message.routeEpoch : '',
+    sourceBlockId: typeof message.sourceBlockId === 'string' ? message.sourceBlockId : undefined,
+    regionId: typeof message.regionId === 'string' ? message.regionId : undefined,
+    expectedTargetKind: typeof message.expectedTargetKind === 'string' ? message.expectedTargetKind : '',
+  };
+}
+
+function handleRegionTargetValidate(message = {}) {
+  const adapter = globalThis.AURA_PAGE_SIGNALS_ADAPTER_V1;
+  const validator = adapter?.validateRegionTargetV1;
+  if (typeof validator !== 'function') {
+    return { ok: false, error: 'REGION_TARGET_REGISTRY_UNAVAILABLE' };
+  }
+
+  try {
+    return validator(normalizeRegionTargetRequest(message), { doc: document });
+  } catch (error) {
+    return { ok: false, error: 'REGION_TARGET_VALIDATE_FAILED', detail: error?.message || 'unknown' };
+  }
+}
+
+function handlePageClarityMarkTarget(message = {}) {
+  const adapter = globalThis.AURA_PAGE_SIGNALS_ADAPTER_V1;
+  const validator = adapter?.validateRegionTargetV1;
+  const getTarget = adapter?.getRegionTargetElementV1;
+  if (typeof validator !== 'function' || typeof getTarget !== 'function') {
+    return { ok: false, reason: 'REGION_TARGET_REGISTRY_UNAVAILABLE' };
+  }
+
+  try {
+    const request = normalizeRegionTargetRequest(message);
+    const validation = validator(request, { doc: document });
+    if (validation?.ok !== true) {
+      return validation;
+    }
+
+    const target = getTarget(request, { doc: document });
+    if (!target || typeof target.setAttribute !== 'function') {
+      return { ...validation, ok: false, reason: 'TARGET_NOT_FOUND' };
+    }
+
+    target.setAttribute(PAGE_CLARITY_TARGET_ATTR, '1');
+    pageClarityMarkedTargets.add(target);
+    return {
+      ...validation,
+      ok: true,
+      reason: 'OK',
+      marked: true,
+      markedCount: pageClarityMarkedTargets.size,
+    };
+  } catch (error) {
+    return { ok: false, reason: 'PAGE_CLARITY_MARK_FAILED', detail: error?.message || 'unknown' };
+  }
+}
+
+function isTransparentColor(value) {
+  if (typeof value !== 'string') {
+    return true;
+  }
+  const normalized = value.trim().toLowerCase();
+  return !normalized
+    || normalized === 'transparent'
+    || normalized === 'rgba(0, 0, 0, 0)'
+    || normalized === 'rgba(0,0,0,0)';
+}
+
+function normalizeCssValue(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function computedOutlineWidth(style) {
+  const raw = style?.outlineWidth || '';
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizedOutlineWidth(styleSnapshot) {
+  const raw = styleSnapshot?.outlineWidth || '';
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function snapshotPageClarityStyle(element) {
+  if (!element || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
+    return null;
+  }
+
+  try {
+    const style = window.getComputedStyle(element);
+    return {
+      textDecorationLine: normalizeCssValue(style.textDecorationLine),
+      textDecorationColor: normalizeCssValue(style.textDecorationColor),
+      textDecorationThickness: normalizeCssValue(style.textDecorationThickness),
+      textUnderlineOffset: normalizeCssValue(style.textUnderlineOffset),
+      color: normalizeCssValue(style.color),
+      backgroundColor: normalizeCssValue(style.backgroundColor),
+      outlineColor: normalizeCssValue(style.outlineColor),
+      outlineStyle: normalizeCssValue(style.outlineStyle),
+      outlineWidth: normalizeCssValue(style.outlineWidth),
+      caretColor: normalizeCssValue(style.caretColor),
+      accentColor: normalizeCssValue(style.accentColor),
+      boxShadow: normalizeCssValue(style.boxShadow),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function targetMatchesSelector(target, selector) {
+  try {
+    return typeof target?.matches === 'function' && target.matches(selector);
+  } catch (_) {
+    return false;
+  }
+}
+
+function pageClarityProbeSelector(expectedTargetKind) {
+  if (expectedTargetKind === 'RECORD_REGION') {
+    return 'a[href], [role="link"]';
+  }
+  if (expectedTargetKind === 'FORM_REGION') {
+    return 'label, legend, [aria-label], input, select, textarea';
+  }
+  return 'a[href], [role="link"], label, legend, [aria-label], input, select, textarea, button, [role="checkbox"], [role="radio"]';
+}
+
+function collectPageClarityProbeElements(target, expectedTargetKind) {
+  const selector = pageClarityProbeSelector(expectedTargetKind);
+  const elements = [];
+
+  if (targetMatchesSelector(target, selector)) {
+    elements.push(target);
+  }
+
+  try {
+    if (typeof target?.querySelectorAll === 'function') {
+      elements.push(...Array.from(target.querySelectorAll(selector)));
+    }
+  } catch (_) {
+    // A malformed page-local selector environment should not crash the probe.
+  }
+
+  return elements.slice(0, 80);
+}
+
+function createPageClarityBaselineEntry(target, expectedTargetKind) {
+  const elements = collectPageClarityProbeElements(target, expectedTargetKind)
+    .map((element) => ({ element, before: snapshotPageClarityStyle(element) }))
+    .filter((entry) => entry.before);
+  const targetStyle = snapshotPageClarityStyle(target);
+  return {
+    expectedTargetKind,
+    collectedAt: Date.now(),
+    targetStyle,
+    elements,
+  };
+}
+
+function styleChanged(before, after, keys) {
+  if (!before || !after) return false;
+  return keys.some((key) => before[key] !== after[key]);
+}
+
+function hasVisibleAfterValue(after, keys) {
+  if (!after) return false;
+  return keys.some((key) => {
+    const value = after[key];
+    if (!value || value === 'auto' || value === 'none' || value === 'normal') {
+      return false;
+    }
+    if (key === 'backgroundColor' || key === 'caretColor') {
+      return !isTransparentColor(value);
+    }
+    if (key === 'outlineWidth') {
+      return normalizedOutlineWidth(after) > 0;
+    }
+    return true;
+  });
+}
+
+function elementHasPageClarityDelta(entry, expectedTargetKind) {
+  const after = snapshotPageClarityStyle(entry?.element);
+  if (!entry?.before || !after) return false;
+
+  if (expectedTargetKind === 'RECORD_REGION') {
+    const keys = [
+      'textDecorationLine',
+      'textDecorationColor',
+      'textDecorationThickness',
+      'textUnderlineOffset',
+      'backgroundColor',
+      'color',
+      'outlineColor',
+      'outlineStyle',
+      'outlineWidth',
+    ];
+    return styleChanged(entry.before, after, keys)
+      && hasVisibleAfterValue(after, ['textDecorationLine', 'textDecorationColor', 'backgroundColor', 'color', 'outlineWidth']);
+  }
+
+  if (expectedTargetKind === 'FORM_REGION') {
+    const keys = [
+      'textDecorationLine',
+      'textDecorationColor',
+      'textDecorationThickness',
+      'textUnderlineOffset',
+      'backgroundColor',
+      'color',
+      'outlineColor',
+      'outlineStyle',
+      'outlineWidth',
+      'caretColor',
+      'accentColor',
+    ];
+    return styleChanged(entry.before, after, keys)
+      && hasVisibleAfterValue(after, ['textDecorationLine', 'textDecorationColor', 'backgroundColor', 'outlineWidth', 'caretColor', 'accentColor']);
+  }
+
+  const keys = ['backgroundColor', 'outlineColor', 'outlineStyle', 'outlineWidth', 'caretColor', 'accentColor'];
+  return styleChanged(entry.before, after, keys)
+    && hasVisibleAfterValue(after, ['backgroundColor', 'outlineWidth', 'caretColor', 'accentColor']);
+}
+
+function targetHasPageClarityRegionDelta(baseline) {
+  const after = snapshotPageClarityStyle(baseline?.target);
+  if (!baseline?.targetStyle || !after) return false;
+  return styleChanged(baseline.targetStyle, after, ['backgroundColor', 'boxShadow', 'outlineColor', 'outlineStyle', 'outlineWidth'])
+    && hasVisibleAfterValue(after, ['backgroundColor', 'boxShadow', 'outlineWidth']);
+}
+
+function handlePageClarityEffectBaseline(message = {}) {
+  const expectedTargetKind = typeof message.expectedTargetKind === 'string' ? message.expectedTargetKind : '';
+  const markedTargets = Array.from(pageClarityMarkedTargets).filter((target) => {
+    try {
+      return target?.isConnected !== false && typeof target?.getAttribute === 'function';
+    } catch (_) {
+      return false;
+    }
+  });
+
+  if (markedTargets.length === 0) {
+    return {
+      ok: false,
+      reason: 'NO_MARKED_TARGET',
+      frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+      markedTargets: 0,
+      baselineElements: 0,
+    };
+  }
+
+  let baselineElements = 0;
+  for (const target of markedTargets) {
+    const baseline = createPageClarityBaselineEntry(target, expectedTargetKind);
+    baseline.target = target;
+    pageClarityEffectBaselines.set(target, baseline);
+    baselineElements += baseline.elements.length;
+  }
+
+  return {
+    ok: baselineElements > 0,
+    reason: baselineElements > 0 ? 'OK' : 'NO_MATCHED_ELEMENTS',
+    frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+    markedTargets: markedTargets.length,
+    baselineElements,
+  };
+}
+
+function handlePageClarityEffectProbe(message = {}) {
+  const expectedTargetKind = typeof message.expectedTargetKind === 'string' ? message.expectedTargetKind : '';
+  const markedTargets = Array.from(pageClarityMarkedTargets).filter((target) => {
+    try {
+      return target?.isConnected !== false && typeof target?.getAttribute === 'function';
+    } catch (_) {
+      return false;
+    }
+  });
+
+  if (markedTargets.length === 0) {
+    return {
+      ok: false,
+      reason: 'NO_MARKED_TARGET',
+      frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+      markedTargets: 0,
+      matchedLinks: 0,
+      matchedLabels: 0,
+      matchedInputs: 0,
+      changedElements: 0,
+      visibleEffectScore: 0,
+    };
+  }
+
+  let matchedLinks = 0;
+  let matchedLabels = 0;
+  let matchedInputs = 0;
+  let changedElements = 0;
+  let inspectedElements = 0;
+  let targetsWithRegionDelta = 0;
+  let targetsWithBaseline = 0;
+
+  for (const target of markedTargets) {
+    const baseline = pageClarityEffectBaselines.get(target);
+    if (!baseline || !Array.isArray(baseline.elements)) {
+      continue;
+    }
+    targetsWithBaseline += 1;
+    if (targetHasPageClarityRegionDelta(baseline)) {
+      targetsWithRegionDelta += 1;
+    }
+    for (const entry of baseline.elements) {
+      const element = entry.element;
+      inspectedElements += 1;
+      if (targetMatchesSelector(element, 'a[href], [role="link"]')) {
+        matchedLinks += 1;
+      }
+      if (targetMatchesSelector(element, 'label, legend, [aria-label]')) {
+        matchedLabels += 1;
+      }
+      if (targetMatchesSelector(element, 'input, select, textarea, button, [role="checkbox"], [role="radio"]')) {
+        matchedInputs += 1;
+      }
+      if (elementHasPageClarityDelta(entry, baseline.expectedTargetKind || expectedTargetKind)) {
+        changedElements += 1;
+      }
+    }
+  }
+
+  if (targetsWithBaseline === 0) {
+    return {
+      ok: false,
+      reason: 'NO_BASELINE',
+      frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+      markedTargets: markedTargets.length,
+      matchedLinks,
+      matchedLabels,
+      matchedInputs,
+      changedElements,
+      visibleEffectScore: 0,
+    };
+  }
+
+  if (inspectedElements === 0) {
+    return {
+      ok: false,
+      reason: 'NO_MATCHED_ELEMENTS',
+      frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+      markedTargets: markedTargets.length,
+      matchedLinks,
+      matchedLabels,
+      matchedInputs,
+      changedElements,
+      visibleEffectScore: 0,
+    };
+  }
+
+  const visibleEffectScore = Math.min(1, changedElements / Math.max(1, inspectedElements));
+  const minimumScore = expectedTargetKind === 'FORM_REGION' ? 0.5 : 0.5;
+  const ok = changedElements > 0 && visibleEffectScore >= minimumScore;
+  return {
+    ok,
+    reason: ok ? 'OK' : (changedElements > 0 ? 'WEAK_EFFECT' : 'STYLE_UNCHANGED'),
+    frameId: typeof message.frameId === 'number' ? message.frameId : undefined,
+    markedTargets: markedTargets.length,
+    matchedLinks,
+    matchedLabels,
+    matchedInputs,
+    changedElements,
+    inspectedElements,
+    targetsWithRegionDelta,
+    visibleEffectScore,
+  };
+}
+
+function handlePageClarityClearTargets() {
+  let removedCount = 0;
+  for (const target of pageClarityMarkedTargets) {
+    try {
+      if (target && typeof target.removeAttribute === 'function') {
+        target.removeAttribute(PAGE_CLARITY_TARGET_ATTR);
+        pageClarityEffectBaselines.delete(target);
+        removedCount += 1;
+      }
+    } catch (_) {
+      // best-effort cleanup; restore must continue even if a stale element throws.
+    }
+  }
+  pageClarityMarkedTargets.clear();
+  return { ok: true, removedCount };
+}
+
 // ========== SECTION 11: MESSAGE LISTENER ==========
-const runtimeMessageListener = (message, sender, sendResponse) => {
-  if (AURA_CONTEXT_INVALIDATED) {
-    sendResponse({ received: false, reason: 'context-invalidated' });
-    return true;
+async function handleSmartScopeGetProfileRoute(message) {
+  const budgetMs = typeof message.budgetMs === 'number' ? message.budgetMs : SMARTSCOPE_TIMEOUT_MS;
+  const level = message.level || 'conservative';
+  const allowed = await ensureSitePolicyAllowed({ context: 'smartscope-profile' });
+  if (!allowed) {
+    return { ok: false, error: 'SITE_POLICY_BLOCKED' };
   }
 
-  if (debugTestHooksEnabled && message?.type === 'AURA_PING_TEST_V1') {
-    sendResponse({ ok: true, type: 'AURA_PONG_TEST_V1' });
-    return true;
+  const { root, profile } = await selectScopeRoot(document, level, budgetMs);
+  return {
+    ok: true,
+    profile: {
+      ...profile,
+      scopeSelector: root ? buildScopeSelectorHint(root) : '',
+    },
+  };
+}
+
+function handleSmartScopeVerifyComputedStylesRoute(message) {
+  return evaluateComputedStyles(message.checks || []);
+}
+
+async function handleModeEngineApplyScopeTokensRoute(message) {
+  const requestedTokenMap = message.tokenMap || {};
+  const ownerKey = message.ownerKey || MODE_ENGINE_SCOPE_OWNER;
+  const darkRequested = isDarkFromTokenMap(requestedTokenMap);
+  let darkEnabled = message.darkThemeExecutorActive === true && darkRequested;
+  const darkRuntime = await loadDarkComfortThemeRuntimeModule();
+  let preparedManifest = null;
+
+  if (darkEnabled && typeof darkRuntime?.prepareDarkComfortThemeRuntime === 'function') {
+    const prepared = darkRuntime.prepareDarkComfortThemeRuntime({
+      scopeRoot: getStoredScopeRoot(),
+      tokenMap: requestedTokenMap,
+      ownerKey,
+      source: 'pre-token-apply',
+    });
+    preparedManifest = prepared?.manifest || null;
+  } else if (darkEnabled) {
+    darkEnabled = false;
   }
 
-  let responsePayload = { received: true };
+  const tokenMap = sanitizeDarkComfortThemeTokens(requestedTokenMap, darkEnabled);
+  const result = await applyScopeTokensToStoredRoot(tokenMap, ownerKey, {
+    transitionMs: message?.transitionMs,
+  });
+  const scopeRoot = getStoredScopeRoot();
 
-  switch (message.action) {
-    case SMARTSCOPE_ACTIONS.GET_PROFILE: {
-      const budgetMs = typeof message.budgetMs === 'number' ? message.budgetMs : SMARTSCOPE_TIMEOUT_MS;
-      const level = message.level || 'conservative';
-      ensureSitePolicyAllowed({ context: 'smartscope-profile' })
-        .then((allowed) => {
-          if (!allowed) {
-            sendResponse({ ok: false, error: 'SITE_POLICY_BLOCKED' });
-            return;
-          }
+  if (result?.ok) {
+    const flags = typeof getAllModeEngineFlags === 'function' ? getAllModeEngineFlags() : null;
+    applyFocusSubmodes({
+      flags,
+      scopeRoot,
+      ...(message?.modeId === (MODE_IDS.FOCUS || 'focus') ? { isFocusActive: false } : {}),
+    }).catch((error) => {
+      modeEngineDebugLog('Focus runtime scope apply failed', error);
+    });
 
-          selectScopeRoot(document, level, budgetMs)
-            .then(({ root, profile }) => {
-              const scopeSelector = root ? buildScopeSelectorHint(root) : '';
-              sendResponse({
-                ok: true,
-                profile: {
-                  ...profile,
-                  scopeSelector,
-                }
-              });
-            })
-            .catch(() => {
-              sendResponse({ ok: false, error: 'SMARTSCOPE_FAILED' });
-            });
-        })
-        .catch(() => {
-          sendResponse({ ok: false, error: 'SMARTSCOPE_FAILED' });
+    let darkResult = null;
+    try {
+      if (typeof darkRuntime?.applyDarkComfortThemeRuntime === 'function') {
+        darkResult = darkRuntime.applyDarkComfortThemeRuntime({
+          scopeRoot,
+          tokenMap,
+          ownerKey,
+          executorActive: darkEnabled,
+          preparedManifest,
+          postCheckBaseline: message.postCheckBaseline,
+          source: 'apply',
+          logger: modeEngineDebugLog,
+          modeActive: () => getModeActive(MODE_IDS.COMFORT_VISUAL) !== false,
+          callbacks: {
+            fixUnreadableHeadings,
+          },
         });
-      return true;
+      }
+    } catch (error) {
+      modeEngineDebugLog('Dark surface apply failed', error);
     }
-    case ACTIONS.SMARTSCOPE_VERIFY_COMPUTED_STYLES_V1: {
-      const payload = evaluateComputedStyles(message.checks || []);
-      sendResponse(payload);
-      return true;
+
+    if (darkEnabled && darkResult?.ok === false) {
+      const darkFailureDetail = Array.isArray(darkResult?.postCheck?.failures)
+        && darkResult.postCheck.failures.length > 0
+          ? darkResult.postCheck.failures.join(',')
+          : null;
+      const postCheckRatios = darkResult?.postCheck
+        ? [
+            ['textContrast', darkResult.postCheck.textContrast],
+            ['linkContrast', darkResult.postCheck.linkContrast],
+            ['linkDistinct', darkResult.postCheck.linkDistinct],
+            ['focusRingContrast', darkResult.postCheck.focusRingContrast],
+          ]
+            .filter(([, value]) => typeof value === 'number' && Number.isFinite(value))
+            .map(([key, value]) => `${key}=${value.toFixed(2)}`)
+            .join(';')
+        : '';
+      const darkDetail = [darkResult.detail || darkFailureDetail || darkResult.reason || null, postCheckRatios]
+        .filter(Boolean)
+        .join('|');
+      return {
+        ...result,
+        ok: false,
+        error: 'DARK_COMFORT_THEME_ROLLED_BACK',
+        reason: darkResult.reason || 'DARK_COMFORT_THEME_POSTCHECK_FAILED',
+        detail: darkDetail || null,
+        darkComfortTheme: {
+          active: darkResult.active === true,
+          rolledBack: darkResult.rolledBack === true || darkResult.active === false,
+          reason: darkResult.reason || null,
+          failures: darkFailureDetail || null,
+          postCheck: darkResult.postCheck || null,
+        },
+      };
     }
+  }
+
+  return result;
+}
+
+async function handleModeEngineCleanupScopeTokensRoute(message) {
+  clearHeadingFixes();
+  if (message?.smoothTransitions === true || message?.preserveScope === true) {
+    const scopeRoot = getStoredScopeRoot();
+    if (scopeRoot) {
+      armModeEngineAnim(scopeRoot, message?.transitionMs);
+    }
+  }
+
+  const result = await cleanupScopeTokensFromStoredRoot(
+    message.ownerKey || MODE_ENGINE_SCOPE_OWNER,
+    {
+      ...(message?.preserveScope ? { preserveScope: true } : {}),
+      ...(Array.isArray(message?.ownedKeys) ? { ownedKeys: message.ownedKeys } : {}),
+    },
+  );
+  const scopeRoot = getStoredScopeRoot();
+  if (result?.ok) {
+    const flags = typeof getAllModeEngineFlags === 'function' ? getAllModeEngineFlags() : null;
+    applyFocusSubmodes({ flags, scopeRoot }).catch((error) => {
+      modeEngineDebugLog('Focus runtime scope cleanup failed', error);
+    });
+  }
+
+  try {
+    const darkRuntime = await loadDarkComfortThemeRuntimeModule();
+    if (typeof darkRuntime?.cleanupDarkComfortThemeRuntime === 'function') {
+      darkRuntime.cleanupDarkComfortThemeRuntime({
+        scopeRoot,
+        source: 'cleanup',
+        tokensAlreadyRemoved: true,
+        logger: modeEngineDebugLog,
+        callbacks: {
+          clearHeadingFixes,
+        },
+      });
+    }
+  } catch (error) {
+    modeEngineDebugLog('Dark surface cleanup failed', error);
+  }
+
+  return result;
+}
+
+function handleModeEngineSetScopeRootRoute(message) {
+  return handleModeEngineV2SetScopeRoot(message?.selector);
+}
+
+function handleModeEngineVerifyScopeRootRoute(message) {
+  return handleModeEngineV2VerifyScopeRoot(message?.selector);
+}
+
+function handleModeEngineSalvageScopeRootRoute(message) {
+  return handleModeEngineV2SalvageScopeRoot(message?.selector, message?.debugEnabled);
+}
+
+function handleModeEngineMeasureContrastRoute(message) {
+  try {
+    const sampleLimit = typeof message.sampleLimit === 'number' ? message.sampleLimit : CONTRAST_SAMPLE_LIMIT;
+    return measureScopeContrast(sampleLimit);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'contrast-check-failed',
+      detail: error?.message || 'measureScopeContrast failed',
+    };
+  }
+}
+
+async function handleShowBannerRoute(message) {
+  if (typeof message.modeId !== 'string' || !Object.values(MODE_IDS).includes(message.modeId)) {
+    return { ok: false, received: false, error: 'INVALID_MODE_ID' };
+  }
+  if (isAnyModeActive()) {
+    hideSuggestionBannerIfPresent();
+    return { ok: true, suppressed: true, reason: 'mode-active' };
+  }
+
+  const allowed = await ensureSitePolicyAllowed({ context: 'show-banner' });
+  if (!allowed) {
+    return { ok: false, received: false, suppressed: true, error: 'SITE_POLICY_DENIED' };
+  }
+
+  if (!activeBanner) {
+    activeBanner = new SuggestionBanner();
+  }
+  activeBanner.show({
+    modeId: message.modeId,
+    score: typeof message.score === 'number' ? message.score : message.confidence,
+    position: message.position || BANNER_POSITION.TOP_RIGHT,
+  });
+  return { ok: true, received: true };
+}
+
+function handleTestInjectSuggestionBannerRoute(message) {
+  return handleTestInjectSuggestionBanner(message.modeId, message.confidence, message.signals);
+}
+
+function handleInjectRestoreButtonRoute(message) {
+  if (typeof message.modeId !== 'string' || !Object.values(MODE_IDS).includes(message.modeId)) {
+    return { ok: false, injected: false, error: 'INVALID_MODE_ID' };
+  }
+  ensureRestoreButtonConstructor();
+  if (typeof AURA?.RestoreButton !== 'function') {
+    console.error('[CS] RestoreButton missing or not constructible');
+    return { ok: false, injected: false, error: 'RESTORE_BUTTON_INVALID' };
+  }
+  setModeActive(message.modeId, true);
+  if (activeRestoreButton) {
+    activeRestoreButton.remove();
+  }
+  activeRestoreButton = new AURA.RestoreButton(message.modeId);
+  activeRestoreButton.inject();
+  if (message.modeId === (MODE_IDS.FOCUS || 'focus')) {
+    applyFocusRuntime().catch((error) => {
+      modeEngineDebugLog('Focus runtime enable failed', error);
+    });
+  }
+  return { ok: true, injected: true };
+}
+
+function handleRemoveRestoreButtonRoute(message) {
+  if (activeRestoreButton) {
+    activeRestoreButton.remove();
+    activeRestoreButton = null;
+  } else {
+    const existingButton = findOwnedAuraUiHost(RESTORE_BUTTON_OWNER);
+    if (existingButton?.parentNode) {
+      existingButton.parentNode.removeChild(existingButton);
+    }
+  }
+  if (message.modeId === (MODE_IDS.FOCUS || 'focus')) {
+    setModeActive(message.modeId, false);
+    applyFocusRuntime().catch((error) => {
+      modeEngineDebugLog('Focus runtime disable failed', error);
+    });
+  } else if (typeof message.modeId === 'string') {
+    setModeActive(message.modeId, false);
+  }
+  return { ok: true, removed: true };
+}
+
+function handlePrefsUpdatedRoute(message) {
+  setRuntimePrefs(message?.prefs || {});
+  applyFocusRuntime(message?.prefs).catch((error) => {
+    modeEngineDebugLog('Focus runtime prefs update failed', error);
+  });
+  return { received: true };
+}
+
+function handleModeEngineApplyResultRoute(message) {
+  modeEngineDebugLog('ModeEngine v2 apply result', {
+    ok: message?.ok !== false,
+    reason: message?.reason || null,
+    mode: message?.modeId || message?.mode,
+    attemptId: message?.attemptId,
+  });
+  if (typeof message?.modeId === 'string' || typeof message?.mode === 'string') {
+    const resolvedModeId = message?.modeId || message?.mode;
+    setModeActive(resolvedModeId, message?.ok !== false);
+    if (resolvedModeId === (MODE_IDS.FOCUS || 'focus')) {
+      applyFocusRuntime().catch((error) => {
+        modeEngineDebugLog('Focus runtime apply result update failed', error);
+      });
+    }
+    if (message?.ok !== false && resolvedModeId === MODE_IDS.COMFORT_VISUAL) {
+      setTimeout(() => {
+        sendContrastReport(resolvedModeId, message?.attemptId).catch((error) => {
+          modeEngineDebugLog('Contrast report failed', error);
+        });
+      }, 0);
+    }
+  }
+  return { received: true };
+}
+
+function mapContentRouteError(action, error) {
+  switch (action) {
+    case SMARTSCOPE_ACTIONS.GET_PROFILE:
+      return { ok: false, error: 'SMARTSCOPE_FAILED' };
     case ACTIONS.MODE_ENGINE_V2_APPLY_SCOPE_TOKENS:
-      applyScopeTokensToStoredRoot(message.tokenMap || {}, message.ownerKey || MODE_ENGINE_SCOPE_OWNER, {
-        transitionMs: message?.transitionMs,
-      })
-        .then((result) => {
-          const scopeRoot = getStoredScopeRoot();
-          if (result?.ok) {
-            const flags = typeof getAllModeEngineFlags === 'function' ? getAllModeEngineFlags() : null;
-            applyFocusSubmodes(null, null, flags, scopeRoot).catch((error) => {
-              modeEngineDebugLog('Focus runtime scope apply failed', error);
-            });
-            try {
-              const darkEnabled = isDarkFromTokenMap(message.tokenMap || {});
-              if (darkEnabled && scopeRoot) {
-                scheduleDarkInitialApplyPasses(scopeRoot);
-                ensureDarkObserver(scopeRoot);
-                applyDarkSurfaceInlineOverridesSafe(scopeRoot, 'apply');
-                fixUnreadableHeadings(scopeRoot);
-                scheduleDarkInlineSliceRescans(scopeRoot);
-                startDarkObservers(scopeRoot);
-              } else {
-                if (scopeRoot) {
-                  clearDarkSurfaceTagsSafe(scopeRoot, 'apply');
-                }
-                teardownDarkObserver();
-                stopDarkObservers();
-                stopDarkInitialApplyPasses();
-                clearDarkSurfaceInlineOverridesSafe('apply');
-              }
-            } catch (error) {
-              modeEngineDebugLog('Dark surface apply failed', error);
-            }
-          }
-          sendResponse(result);
-        })
-        .catch((error) => {
-          sendResponse({
-            ok: false,
-            error: 'TOKEN_APPLY_FAILED',
-            detail: error?.message || 'applyScopeTokens failed',
-          });
-        });
-      return true;
+      return { ok: false, error: 'TOKEN_APPLY_FAILED', detail: error?.message || 'applyScopeTokens failed' };
     case ACTIONS.MODE_ENGINE_V2_CLEANUP_SCOPE_TOKENS:
-      clearHeadingFixes();
-      if (message?.smoothTransitions === true || message?.preserveScope === true) {
-        const scopeRoot = getStoredScopeRoot();
-        if (scopeRoot) {
-          armModeEngineAnim(scopeRoot, message?.transitionMs);
-        }
-      }
-      cleanupScopeTokensFromStoredRoot(
-        message.ownerKey || MODE_ENGINE_SCOPE_OWNER,
-        message?.preserveScope ? { preserveScope: true } : {},
-      )
-        .then((result) => {
-          const scopeRoot = getStoredScopeRoot();
-          if (result?.ok) {
-            const flags = typeof getAllModeEngineFlags === 'function' ? getAllModeEngineFlags() : null;
-            applyFocusSubmodes(null, null, flags, scopeRoot).catch((error) => {
-              modeEngineDebugLog('Focus runtime scope cleanup failed', error);
-            });
-          }
-          try {
-            if (scopeRoot) {
-              clearDarkSurfaceTagsSafe(scopeRoot, 'cleanup');
-            }
-            teardownDarkObserver();
-            stopDarkObservers();
-            stopDarkInitialApplyPasses();
-            clearDarkSurfaceInlineOverridesSafe('cleanup');
-          } catch (error) {
-            modeEngineDebugLog('Dark surface cleanup failed', error);
-          }
-          sendResponse(result);
-        })
-        .catch((error) => {
-          sendResponse({
-            ok: false,
-            error: 'TOKEN_APPLY_FAILED',
-            detail: error?.message || 'cleanupScopeTokens failed',
-          });
-        });
-      return true;
+      return { ok: false, error: 'TOKEN_APPLY_FAILED', detail: error?.message || 'cleanupScopeTokens failed' };
     case ACTIONS.MODE_ENGINE_V2_SET_SCOPE_ROOT:
-      handleModeEngineV2SetScopeRoot(message?.selector)
-        .then((result) => {
-          sendResponse(result);
-        })
-        .catch((error) => {
-          sendResponse({
-            ok: false,
-            error: 'SET_SCOPE_ROOT_FAILED',
-            detail: error?.message || 'setScopeRoot failed',
-          });
-        });
-      return true;
+      return { ok: false, error: 'SET_SCOPE_ROOT_FAILED', detail: error?.message || 'setScopeRoot failed' };
     case ACTIONS.MODE_ENGINE_V2_VERIFY_SCOPE_ROOT:
-      handleModeEngineV2VerifyScopeRoot(message?.selector)
-        .then((result) => {
-          sendResponse(result);
-        })
-        .catch((error) => {
-          sendResponse({
-            ok: false,
-            error: 'VERIFY_SCOPE_ROOT_FAILED',
-            detail: error?.message || 'verifyScopeRoot failed',
-            source: 'verifyScopeRoot',
-          });
-        });
-      return true;
+      return {
+        ok: false,
+        error: 'VERIFY_SCOPE_ROOT_FAILED',
+        detail: error?.message || 'verifyScopeRoot failed',
+        source: 'verifyScopeRoot',
+      };
     case ACTIONS.MODE_ENGINE_V2_SALVAGE_SCOPE_ROOT:
-      handleModeEngineV2SalvageScopeRoot(message?.selector, message?.debugEnabled)
-        .then((result) => {
-          sendResponse(result);
-        })
-        .catch((error) => {
-          sendResponse({
-            ok: false,
-            error: 'SALVAGE_SCOPE_ROOT_FAILED',
-            detail: error?.message || 'salvageScopeRoot failed',
-            source: 'salvageScopeRoot',
-          });
-        });
-      return true;
-    case ACTIONS.MODE_ENGINE_V2_MEASURE_CONTRAST: {
-      try {
-        const sampleLimit = typeof message.sampleLimit === 'number' ? message.sampleLimit : CONTRAST_SAMPLE_LIMIT;
-        sendResponse(measureScopeContrast(sampleLimit));
-      } catch (error) {
-        sendResponse({
-          ok: false,
-          reason: 'contrast-check-failed',
-          detail: error?.message || 'measureScopeContrast failed',
-        });
-      }
-      return true;
-    }
+      return {
+        ok: false,
+        error: 'SALVAGE_SCOPE_ROOT_FAILED',
+        detail: error?.message || 'salvageScopeRoot failed',
+        source: 'salvageScopeRoot',
+      };
     case ACTIONS.SHOW_BANNER:
-      if (isAnyModeActive()) {
-        hideSuggestionBannerIfPresent();
-        sendResponse({ ok: true, suppressed: true, reason: 'mode-active' });
-        return true;
-      }
-      ensureSitePolicyAllowed({ context: 'show-banner' })
-        .then((allowed) => {
-          if (!allowed) {
-            sendResponse({ received: true, suppressed: true });
-            return;
-          }
-
-          if (!activeBanner) {
-            activeBanner = new SuggestionBanner();
-          }
-          activeBanner.show({
-            modeId: message.modeId,
-            score: typeof message.score === 'number' ? message.score : message.confidence,
-            position: message.position || BANNER_POSITION.TOP_RIGHT
-          });
-          sendResponse({ received: true });
-        })
-        .catch(() => {
-          sendResponse({ received: true, suppressed: true });
-        });
-      return true;
-    case ACTIONS.TEST_PING_CONTENT:
-      responsePayload = handleTestPing();
-      break;
-    case ACTIONS.TEST_INJECT_SUGGESTION_BANNER:
-      responsePayload = handleTestInjectSuggestionBanner(
-        message.modeId,
-        message.confidence,
-        message.signals,
-      );
-      break;
-    case ACTIONS.TEST_CLEAR_SUGGESTION_BANNER:
-      responsePayload = handleTestClearSuggestionBanner();
-      break;
-    case ACTIONS.INJECT_RESTORE_BUTTON:
-      ensureRestoreButtonConstructor();
-      if (typeof AURA?.RestoreButton !== 'function') {
-        console.error('[CS] RestoreButton missing or not constructible');
-        responsePayload = { injected: false, error: 'RESTORE_BUTTON_INVALID' };
-        break;
-      }
-      if (typeof message.modeId === 'string') {
-        setModeActive(message.modeId, true);
-      }
-      if (activeRestoreButton) {
-        activeRestoreButton.remove();
-      }
-      activeRestoreButton = new AURA.RestoreButton(message.modeId);
-      activeRestoreButton.inject();
-      if (message.modeId === (MODE_IDS.FOCUS || 'focus')) {
-        applyFocusRuntime().catch((error) => {
-          modeEngineDebugLog('Focus runtime enable failed', error);
-        });
-      }
-      responsePayload = { injected: true };
-      break;
-    case ACTIONS.REMOVE_RESTORE_BUTTON:
-      if (activeRestoreButton) {
-        activeRestoreButton.remove();
-        activeRestoreButton = null;
-      } else {
-        const existingButton = document.getElementById('aura-restore-button');
-        if (existingButton && existingButton.parentNode) {
-          existingButton.parentNode.removeChild(existingButton);
-        }
-      }
-      if (message.modeId === (MODE_IDS.FOCUS || 'focus')) {
-        setModeActive(message.modeId, false);
-        applyFocusRuntime().catch((error) => {
-          modeEngineDebugLog('Focus runtime disable failed', error);
-        });
-      } else if (typeof message.modeId === 'string') {
-        setModeActive(message.modeId, false);
-      }
-      responsePayload = { removed: true };
-      break;
-    case ACTIONS.PREFS_UPDATED:
-      setRuntimePrefs(message?.prefs || {});
-      applyFocusRuntime(message?.prefs).catch((error) => {
-        modeEngineDebugLog('Focus runtime prefs update failed', error);
-      });
-      responsePayload = { received: true };
-      break;
-    case ACTIONS.MODE_ENGINE_V2_APPLY_RESULT:
-      modeEngineDebugLog('ModeEngine v2 apply result', {
-        ok: message?.ok !== false,
-        reason: message?.reason || null,
-        mode: message?.modeId || message?.mode,
-        attemptId: message?.attemptId,
-      });
-      if (typeof message?.modeId === 'string' || typeof message?.mode === 'string') {
-        const resolvedModeId = message?.modeId || message?.mode;
-        setModeActive(resolvedModeId, message?.ok !== false);
-        if (resolvedModeId === (MODE_IDS.FOCUS || 'focus')) {
-          applyFocusRuntime().catch((error) => {
-            modeEngineDebugLog('Focus runtime apply result update failed', error);
-          });
-        }
-        if (message?.ok !== false && resolvedModeId === MODE_IDS.COMFORT_VISUAL) {
-          setTimeout(() => {
-            sendContrastReport(resolvedModeId, message?.attemptId).catch((error) => {
-              modeEngineDebugLog('Contrast report failed', error);
-            });
-          }, 0);
-        }
-      }
-      responsePayload = { received: true };
-      break;
+      return { ok: false, received: false, suppressed: true, error: 'SHOW_BANNER_FAILED' };
     default:
-      // Unknown action placeholder
-      break;
+      return { ok: false, error: 'CONTENT_ROUTE_HANDLER_FAILED' };
   }
+}
 
-  sendResponse(responsePayload);
-  return true;
-};
+const CONTENT_ROUTE_HANDLERS_V1 = Object.freeze({
+  [SMARTSCOPE_ACTIONS.APPLY_CLASSES]: handleSmartScopeApplyClasses,
+  [SMARTSCOPE_ACTIONS.REMOVE_TOKEN]: handleSmartScopeRemoveToken,
+  [ACTIONS.PAGE_SIGNALS_COLLECT_V1]: handlePageSignalsCollect,
+  [ACTIONS.REGION_TARGET_VALIDATE_V1]: handleRegionTargetValidate,
+  [ACTIONS.PAGE_CLARITY_MARK_TARGET_V1]: handlePageClarityMarkTarget,
+  [ACTIONS.PAGE_CLARITY_EFFECT_BASELINE_V1]: handlePageClarityEffectBaseline,
+  [ACTIONS.PAGE_CLARITY_EFFECT_PROBE_V1]: handlePageClarityEffectProbe,
+  [ACTIONS.PAGE_CLARITY_CLEAR_TARGETS_V1]: handlePageClarityClearTargets,
+  [SMARTSCOPE_ACTIONS.GET_PROFILE]: handleSmartScopeGetProfileRoute,
+  [ACTIONS.SMARTSCOPE_VERIFY_COMPUTED_STYLES_V1]: handleSmartScopeVerifyComputedStylesRoute,
+  [ACTIONS.MODE_ENGINE_V2_APPLY_SCOPE_TOKENS]: handleModeEngineApplyScopeTokensRoute,
+  [ACTIONS.MODE_ENGINE_V2_CLEANUP_SCOPE_TOKENS]: handleModeEngineCleanupScopeTokensRoute,
+  [ACTIONS.MODE_ENGINE_V2_SET_SCOPE_ROOT]: handleModeEngineSetScopeRootRoute,
+  [ACTIONS.MODE_ENGINE_V2_VERIFY_SCOPE_ROOT]: handleModeEngineVerifyScopeRootRoute,
+  [ACTIONS.MODE_ENGINE_V2_SALVAGE_SCOPE_ROOT]: handleModeEngineSalvageScopeRootRoute,
+  [ACTIONS.MODE_ENGINE_V2_MEASURE_CONTRAST]: handleModeEngineMeasureContrastRoute,
+  [ACTIONS.SHOW_BANNER]: handleShowBannerRoute,
+  [ACTIONS.TEST_PING_CONTENT]: handleTestPing,
+  [ACTIONS.TEST_INJECT_SUGGESTION_BANNER]: handleTestInjectSuggestionBannerRoute,
+  [ACTIONS.TEST_CLEAR_SUGGESTION_BANNER]: handleTestClearSuggestionBanner,
+  [ACTIONS.INJECT_RESTORE_BUTTON]: handleInjectRestoreButtonRoute,
+  [ACTIONS.REMOVE_RESTORE_BUTTON]: handleRemoveRestoreButtonRoute,
+  [ACTIONS.PREFS_UPDATED]: handlePrefsUpdatedRoute,
+  [ACTIONS.MODE_ENGINE_V2_APPLY_RESULT]: handleModeEngineApplyResultRoute,
+});
+
+try {
+  runtimeMessageListener = contentMessageRouterApi.createListener({
+    routes: CONTENT_MESSAGE_ROUTES_V1,
+    handlers: CONTENT_ROUTE_HANDLERS_V1,
+    documentContextAction: DOCUMENT_CONTEXT_ACTION,
+    diagnosticPingType: TEST_PING_ACTION,
+    diagnosticPongType: TEST_PONG_ACTION,
+    isTopFrame: isTopFrameDocument,
+    isTestHooksEnabled: () => debugTestHooksEnabled,
+    isInvalidated: () => AURA_CONTEXT_INVALIDATED,
+    getDocumentInstanceId: () => DOCUMENT_INSTANCE_ID,
+    mapError: mapContentRouteError,
+  });
+  if (typeof runtimeMessageListener !== 'function') {
+    throw new Error('CONTENT_MESSAGE_ROUTER_LISTENER_INVALID');
+  }
+} catch (error) {
+  const reason = typeof error?.message === 'string' && error.message.startsWith('CONTENT_MESSAGE_ROUTER_')
+    ? error.message
+    : 'CONTENT_MESSAGE_ROUTER_ACTIVATION_FAILED';
+  console.error('[CS] Content message router activation failed', error);
+  markBootstrapAborted(reason);
+  AURA_CONTENT_BOOTSTRAP_STATE.invalidate(AURA_CONTENT_LOAD_STATE.generation, reason);
+  return;
+}
 
 window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__ = runtimeMessageListener;
-window.__AURA_CONTENT_READY_FOR_PING__ = true;
 chrome.runtime.onMessage.addListener(runtimeMessageListener);
+if (!AURA_CONTENT_BOOTSTRAP_STATE.markReady(
+  AURA_CONTENT_LOAD_STATE.generation,
+  runtimeMessageListener,
+)) {
+  chrome.runtime.onMessage.removeListener(runtimeMessageListener);
+  if (window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__ === runtimeMessageListener) {
+    delete window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__;
+  }
+  return;
+}
 
 console.log('[CS] AURA content script loaded');
 })();

@@ -7,49 +7,108 @@
     <link rel="stylesheet" href="welcome.css" />
   </head>
   <body data-testid="welcome-root">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
     <header class="hero">
-      <p class="eyebrow">Privacy-first accessibility</p>
-      <h1 data-testid="welcome-title">Welcome to AURA</h1>
-      <p class="subtitle">
-        AURA suggests gentle accessibility improvements that stay on your device. You stay in control.
-      </p>
-      <a class="cta" href="../options/options.html">Get Started</a>
+      <div class="hero-inner">
+        <p class="eyebrow">Privacy-first accessibility</p>
+        <h1 data-testid="welcome-title">Welcome to AURA</h1>
+        <p class="subtitle">
+          AURA suggests gentle accessibility improvements that stay on your device. You decide when
+          to enable, pause, or never use them.
+        </p>
+        <div class="cta-group">
+          <a class="button button-primary" href="../options/options.html">Open Settings</a>
+          <a class="button button-secondary" href="#how-it-works">See how it works</a>
+        </div>
+      </div>
     </header>
 
-    <main class="content">
-      <section class="pillars">
-        <div class="card">
-          <h2>Local-only intelligence</h2>
-          <p>
-            All analysis happens in your browser. AURA never uploads browsing data—your habits and pages remain private.
-          </p>
-        </div>
-        <div class="card">
-          <h2>User agency by design</h2>
-          <p>
-            AURA suggests, never forces. Banners persist until you choose: Enable, Not now, or Never. Restore is always available.
-          </p>
-        </div>
-        <div class="card">
-          <h2>Why broad access?</h2>
-          <p>
-            Host access lets AURA apply accessibility fixes on the sites you visit. It is used solely for on-page adjustments you approve.
-          </p>
+    <main id="main-content" class="content">
+      <section class="section" aria-labelledby="what-you-get">
+        <h2 id="what-you-get">What you get</h2>
+        <div class="card-grid">
+          <div class="card">
+            <h3>Local-only intelligence</h3>
+            <p>Signals are processed in your browser. AURA never uploads pages or browsing data.</p>
+          </div>
+          <div class="card">
+            <h3>User agency</h3>
+            <p>Each suggestion stays until you choose: Enable, Not now, or Never. Restore is one click away.</p>
+          </div>
+          <div class="card">
+            <h3>Site access, explained</h3>
+            <p>Host access lets AURA apply the fixes you approve on any site you visit—nothing else.</p>
+          </div>
         </div>
       </section>
 
-      <section class="steps">
-        <h2>How it works</h2>
-        <ol>
-          <li>Detects signals like zooming to understand when you need support.</li>
-          <li>Suggests readability or focus tweaks without changing content.</li>
-          <li>Lets you decide, with a one-click restore if you change your mind.</li>
+      <section id="how-it-works" class="section" aria-labelledby="quick-setup">
+        <h2 id="quick-setup">Quick setup</h2>
+        <ol class="step-list">
+          <li>
+            <strong>Open Settings</strong> and choose your default modes for Comfort Visual and Focus.
+          </li>
+          <li>
+            <strong>Try on a safe site</strong> like Wikipedia, then accept or dismiss the first suggestions.
+          </li>
+          <li>
+            <strong>Manage per-site rules</strong> in Domains (Allow / Never) and restore anytime from the banner.
+          </li>
         </ol>
+      </section>
+
+      <section class="section" aria-labelledby="trust-permissions">
+        <h2 id="trust-permissions">Trust &amp; permissions</h2>
+        <div class="faq">
+          <div class="faq-item">
+            <h3>Why does AURA need site access?</h3>
+            <p>So it can apply readability and focus tweaks on the pages you visit, only when you approve.</p>
+          </div>
+          <div class="faq-item">
+            <h3>What data is stored?</h3>
+            <p>Local preferences and per-site decisions. Everything stays on your device.</p>
+          </div>
+          <div class="faq-item">
+            <h3>How do I revoke access?</h3>
+            <p>
+              Open <a href="../options/options.html#section-domains">Settings → Domains</a> and update
+              Allow/Never rules at any time.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="privacy-summary">
+        <h2 id="privacy-summary">Privacy summary</h2>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <h3>We do</h3>
+            <ul>
+              <li>Use local signals to suggest accessibility changes.</li>
+              <li>Store preferences and per-site keys on your device.</li>
+              <li>Apply only what you choose, with undo built in.</li>
+            </ul>
+          </div>
+          <div class="summary-card">
+            <h3>We don’t</h3>
+            <ul>
+              <li>Upload pages or browsing history.</li>
+              <li>Sell data or track identity.</li>
+              <li>Change content without your approval.</li>
+            </ul>
+          </div>
+        </div>
       </section>
     </main>
 
     <footer class="footer">
-      <p>Need to adjust settings later? Open the AURA options from the extension menu.</p>
+      <p>You can always reopen Settings from the extension menu.</p>
+      <div class="footer-links">
+        <a href="../options/options.html">Open Settings</a>
+        <span aria-hidden="true">•</span>
+        <a href="../options/options.html#section-domains">Manage site access</a>
+      </div>
     </footer>
   </body>
 </html>

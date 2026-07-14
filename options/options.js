@@ -11,9 +11,43 @@ import {
   buildExportPayload,
   downloadExport,
   importPayloadAndApply,
-  resetAllData,
 } from '../shared/data-portability.js';
-import { mergeComfortVisualPrefs, normalizeComfortVisualPrefs } from '../shared/comfort-visual-prefs.js';
+import {
+  COMFORT_VISUAL_PREF_FEATURE_IDS,
+  COMFORT_VISUAL_SAFETY_PREF_KEYS,
+  mergeComfortVisualPrefs,
+  normalizeComfortVisualPrefs,
+} from '../shared/comfort-visual-prefs.js';
+import { FEATURE_IDS } from '../shared/engine-core/index.js';
+import { buildModeFeatureUiModelV1 } from '../shared/mode-feature-ui.js';
+import {
+  extractDomain,
+  mutateLocalValue,
+  parseStrictDomainInput,
+  removeLocalValue,
+  runStorageAreaTransaction,
+} from '../shared/utils.js';
+import {
+  PROFILE_ACTIONS,
+  normalizeSiteProfiles,
+  parseProfileTarget,
+} from '../shared/site-profiles.js';
+import {
+  createModeEngineDiagnosticsController,
+  createModeEngineDiagnosticsView,
+} from './modeengine-diagnostics.js';
+import {
+  createOptionsDataManagementController,
+  createOptionsDataManagementView,
+} from './data-management.js';
+import {
+  createOptionsLearningManagementController,
+  createOptionsLearningManagementView,
+} from './learning-management.js';
+import {
+  createOptionsDomainConfigurationController,
+  createOptionsDomainConfigurationView,
+} from './domain-configuration.js';
 
 /** @typedef {"success"|"error"|"info"} StatusKind */
 
@@ -31,6 +65,7 @@ import { mergeComfortVisualPrefs, normalizeComfortVisualPrefs } from '../shared/
  */
 
 const statusEl = document.getElementById('inline-status');
+const statusRetryBtn = document.getElementById('status-retry');
 const inlineWarning = document.getElementById('inline-warning');
 const suggestionSlider = document.getElementById('suggestion-threshold');
 const autoSlider = document.getElementById('auto-threshold');
@@ -39,14 +74,6 @@ const autoValue = document.getElementById('auto-threshold-value');
 const cooldownSelect = document.getElementById('cooldown-duration');
 const spaToggle = document.getElementById('spa-toggle');
 const spaStatus = document.getElementById('spa-status');
-const allowInput = document.getElementById('allowlist-input');
-const denyInput = document.getElementById('denylist-input');
-const allowListEl = document.getElementById('allowlist-items');
-const denyListEl = document.getElementById('denylist-items');
-const learningBody = document.getElementById('learning-body');
-const importFileInput = document.getElementById('import-file');
-const resetLearningConfirm = document.getElementById('confirm-reset-learning');
-const resetAllConfirm = document.getElementById('confirm-reset-all');
 const smartScopeToggle = document.getElementById('smartscope-toggle');
 const smartScopeLevel = document.getElementById('smartscope-level');
 const smartScopeLevelField = document.getElementById('smartscope-level-field');
@@ -54,26 +81,39 @@ const smartScopeDomainInput = document.getElementById('smartscope-domain');
 const smartScopeDomainLevel = document.getElementById('smartscope-domain-level');
 const smartScopeDomainEnabled = document.getElementById('smartscope-domain-enabled');
 const smartScopeDomainSave = document.getElementById('smartscope-domain-save');
+const smartScopeDomainFeedback = document.getElementById('smartscope-domain-feedback');
 const smartScopeDomainList = document.getElementById('smartscope-domain-list');
 const smartScopeStatus = document.getElementById('smartscope-status');
 const smartScopePanic = document.getElementById('smartscope-panic');
+const smartScopeAdvancedTrigger = document.getElementById('smartscope-advanced-trigger');
+const smartScopeAdvancedPanel = document.getElementById('smartscope-advanced-panel');
 const smartScopeDebugToggle = document.getElementById('smartscope-debug-toggle');
 const smartScopeDebugExport = document.getElementById('smartscope-debug-export');
 const smartScopeDebugClear = document.getElementById('smartscope-debug-clear');
 const smartScopeDebugStatus = document.getElementById('smartscope-debug-status');
 const smartScopeRunStatus = document.getElementById('smartscope-run-status');
 const smartScopeRunList = document.getElementById('smartscope-run-list');
+const debugSnapshotStatus = document.getElementById('debug-snapshot-status');
+const generalStatus = document.getElementById('status-general');
+const comfortVisualStatus = document.getElementById('status-comfort-visual');
+const focusStatus = document.getElementById('status-focus');
+const suggestionsStatus = document.getElementById('status-suggestions');
+const domainsStatus = document.getElementById('status-domains');
+const smartScopeSectionStatus = document.getElementById('status-smartscope');
+const learningStatus = document.getElementById('status-learning');
+const dataStatus = document.getElementById('status-data');
+const advancedStatus = document.getElementById('status-advanced');
 const comfortVisualInputs = {
   textScale: document.getElementById('cv-text-scale'),
   spacingPack: document.getElementById('cv-spacing-pack'),
   linkEnhance: document.getElementById('cv-link-enhance'),
   typoSmoothing: document.getElementById('cv-typo-smoothing'),
-  reflowGuard: document.getElementById('cv-reflow-guard'),
   darkMode: document.getElementById('cv-dark-mode'),
 };
 const focusInputs = {
   distractionDim: document.getElementById('focus-distraction-dim'),
   overlayAlpha: document.getElementById('focus-overlay-alpha'),
+  overlayBlur: document.getElementById('focus-overlay-blur'),
   readingRuler: document.getElementById('focus-reading-ruler'),
   readingRulerHeight: document.getElementById('focus-reading-ruler-height'),
   readingRulerOpacity: document.getElementById('focus-reading-ruler-opacity'),
@@ -83,26 +123,139 @@ const focusInputs = {
   reduceMotion: document.getElementById('focus-reduce-motion'),
 };
 const focusDefaultToggle = document.getElementById('focus-default-enabled');
+const FOCUS_PREF_FEATURE_IDS = Object.freeze({
+  distractionDim: FEATURE_IDS.DISTRACTION_DIM,
+  overlayBlur: FEATURE_IDS.OVERLAY_BLUR,
+  readingRuler: FEATURE_IDS.READING_RULER,
+  ultraFocus: FEATURE_IDS.ULTRA_FOCUS,
+  targetBoost: FEATURE_IDS.TARGET_BOOST,
+  focusNotObscured: FEATURE_IDS.FOCUS_NOT_OBSCURED,
+  reduceMotion: FEATURE_IDS.REDUCE_MOTION,
+});
+const MODE_FEATURE_MODELS = Object.freeze({
+  [MODE_IDS.COMFORT_VISUAL]: buildModeFeatureUiModelV1(MODE_IDS.COMFORT_VISUAL),
+  [MODE_IDS.FOCUS]: buildModeFeatureUiModelV1(MODE_IDS.FOCUS),
+});
 
 let currentUserPrefs = null;
 let currentComfortVisualPrefs = null;
+let comfortVisualPrefWriteQueue = Promise.resolve();
 let currentFocusPrefs = null;
-let currentAllowlist = [];
-let currentDenylist = [];
-let currentLearning = {};
-let currentDecisions = {};
 let currentSmartScope = {
   enabled: true,
   level: SMARTSCOPE_LEVELS.CONSERVATIVE,
   perDomain: {},
 };
+let statusTimeoutId = null;
+let lastRetryAction = null;
+const sectionStatusMap = new Map([
+  ['general', generalStatus],
+  ['comfort-visual', comfortVisualStatus],
+  ['focus', focusStatus],
+  ['suggestions', suggestionsStatus],
+  ['domains', domainsStatus],
+  ['smartscope', smartScopeSectionStatus],
+  ['learning', learningStatus],
+  ['data', dataStatus],
+  ['advanced', advancedStatus],
+]);
+const modeEngineDiagnosticsView = createModeEngineDiagnosticsView({
+  document,
+  reportStatus: showDebugSnapshotStatus,
+});
+const modeEngineDiagnostics = createModeEngineDiagnosticsController({
+  listTabs: () => chrome.tabs.query({ currentWindow: true }),
+  requestSnapshot: (tabId) => chrome.runtime.sendMessage({
+    action: ACTIONS.GET_DEBUG_SNAPSHOT,
+    tabId,
+  }),
+  downloadSnapshot: downloadExport,
+  view: modeEngineDiagnosticsView,
+});
+const dataManagementView = createOptionsDataManagementView({
+  document,
+  reportInlineStatus: showInlineStatus,
+  reportSectionStatus: showSectionStatus,
+});
+const dataManagement = createOptionsDataManagementController({
+  buildExport: buildExportPayload,
+  importAndApply: importPayloadAndApply,
+  resetAll: async () => {
+    const result = await chrome.runtime.sendMessage({ action: ACTIONS.RESET_ALL_DATA });
+    if (result?.ok !== true) {
+      throw new Error(result?.reason || result?.error || 'Reset failed');
+    }
+  },
+  download: downloadExport,
+  getVersion: () => chrome.runtime.getManifest().version,
+  reloadState: loadAndRenderState,
+  view: dataManagementView,
+});
+const learningManagementView = createOptionsLearningManagementView({
+  document,
+  reportInlineStatus: showInlineStatus,
+  reportSectionStatus: showSectionStatus,
+});
+const learningManagement = createOptionsLearningManagementController({
+  mutateLearning: (updater) => mutateLocalValue(STORAGE_KEYS.LEARNING_WEIGHTS, updater),
+  view: learningManagementView,
+  learningStages: LEARNING_STAGES,
+});
+const domainConfigurationView = createOptionsDomainConfigurationView({
+  document,
+  reportInlineStatus: showInlineStatus,
+  reportSectionStatus: showSectionStatus,
+});
+const domainConfiguration = createOptionsDomainConfigurationController({
+  mutateLists: (updater) => runStorageAreaTransaction('local', async () => {
+    const stored = await chrome.storage.local.get([STORAGE_KEYS.ALLOWLIST, STORAGE_KEYS.DENYLIST]);
+    const committed = await updater({
+      allowlist: stored[STORAGE_KEYS.ALLOWLIST],
+      denylist: stored[STORAGE_KEYS.DENYLIST],
+    });
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.ALLOWLIST]: committed.allowlist,
+      [STORAGE_KEYS.DENYLIST]: committed.denylist,
+    });
+    return committed;
+  }),
+  mutateProfiles: (updater) => mutateLocalValue(STORAGE_KEYS.SITE_PROFILES, updater),
+  normalizeDomain: normalizeAndValidateDomain,
+  parseProfileTarget,
+  normalizeProfiles: normalizeSiteProfiles,
+  profileActions: PROFILE_ACTIONS,
+  defaultModeId: MODE_IDS.COMFORT_VISUAL,
+  createProfileId: (timestamp) => (
+    crypto?.randomUUID ? crypto.randomUUID() : `profile-${timestamp}-${Math.random().toString(16).slice(2)}`
+  ),
+  view: domainConfigurationView,
+});
 
 export async function initOptionsPage() {
   document.addEventListener('DOMContentLoaded', async () => {
-    handleWhyFallbackNotice();
     await loadAndRenderState();
+    handleWhyFallbackNotice();
     bindEvents();
+    dataManagement.initialize();
+    learningManagement.initialize();
+    domainConfiguration.initialize();
   });
+}
+
+function shouldReduceMotionInOptions() {
+  if (currentUserPrefs?.reducedMotion === true) {
+    return true;
+  }
+
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function getOptionsScrollBehavior() {
+  return shouldReduceMotionInOptions() ? 'auto' : 'smooth';
 }
 
 function handleWhyFallbackNotice() {
@@ -114,17 +267,18 @@ function handleWhyFallbackNotice() {
   if (params.get('reason') === 'openPopup_failed') {
     inlineWarning.textContent = "Impossible d’ouvrir la popup automatiquement (UX dégradée).";
     inlineWarning.style.display = 'block';
-    inlineWarning.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    inlineWarning.scrollIntoView({ behavior: getOptionsScrollBehavior(), block: 'start' });
   }
 }
 
 async function loadAllStateForUI() {
-  const { userPrefs, allowlist, denylist, learningWeights, perDomainPrefs } = await chrome.storage.local.get([
+  const { userPrefs, allowlist, denylist, learningWeights, perDomainPrefs, siteProfiles } = await chrome.storage.local.get([
     STORAGE_KEYS.USER_PREFS,
     STORAGE_KEYS.ALLOWLIST,
     STORAGE_KEYS.DENYLIST,
     STORAGE_KEYS.LEARNING_WEIGHTS,
     STORAGE_KEYS.PER_DOMAIN_PREFS,
+    STORAGE_KEYS.SITE_PROFILES,
   ]);
 
   return {
@@ -134,6 +288,7 @@ async function loadAllStateForUI() {
     denylist: denylist || [],
     learningWeights: learningWeights || {},
     userDecisions: perDomainPrefs || {},
+    siteProfiles: normalizeSiteProfiles(siteProfiles || {}),
   };
 }
 
@@ -171,6 +326,21 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function getComfortVisualPrefsFromModePrefs(modePrefs = {}) {
+  const source = isPlainObject(modePrefs) ? modePrefs : {};
+  return normalizeComfortVisualPrefs(source[MODE_IDS.COMFORT_VISUAL] ?? source.comfortVisual);
+}
+
+function withComfortVisualPrefs(modePrefs = {}, prefs = {}) {
+  const source = isPlainObject(modePrefs) ? modePrefs : {};
+  const normalized = normalizeComfortVisualPrefs(prefs);
+  return {
+    ...source,
+    [MODE_IDS.COMFORT_VISUAL]: normalized,
+    comfortVisual: normalized,
+  };
+}
+
 function normalizeUserPrefs(raw) {
   const source = isPlainObject(raw) ? raw : {};
   const normalized = { ...source };
@@ -184,9 +354,10 @@ function normalizeUserPrefs(raw) {
   normalized.autoThreshold = typeof source.autoThreshold === 'number' ? source.autoThreshold : 0.85;
   normalized.cooldownDuration = typeof source.cooldownDuration === 'number' ? source.cooldownDuration : 86400000;
   normalized.spaDetectionEnabled = Boolean(source.spaDetectionEnabled);
-  normalized.focusDefaultEnabled = source.focusDefaultEnabled !== false;
+  normalized.focusDefaultEnabled = source.focusDefaultEnabled === true;
   normalized.smartScope = normalizeSmartScopeConfig(source.smartScope);
-  modePrefs.comfortVisual = normalizeComfortVisualPrefs(modePrefs.comfortVisual);
+  Object.assign(modePrefs, withComfortVisualPrefs(modePrefs, getComfortVisualPrefsFromModePrefs(modePrefs)));
+  modePrefs[MODE_IDS.FOCUS] = normalizeFocusPrefs(modePrefs[MODE_IDS.FOCUS]);
   normalized.modePrefs = modePrefs;
 
   return normalized;
@@ -195,18 +366,22 @@ function normalizeUserPrefs(raw) {
 async function loadAndRenderState() {
   const state = await loadAllStateForUI();
   currentUserPrefs = state.userPrefs;
-  currentAllowlist = state.allowlist;
-  currentDenylist = state.denylist;
-  currentLearning = state.learningWeights;
-  currentDecisions = state.userDecisions;
   currentSmartScope = state.smartScope;
   currentUserPrefs.smartScope = currentSmartScope;
 
   renderUserPrefs();
-  renderLists();
-  renderLearningTable();
+  domainConfiguration.setState({
+    allowlist: state.allowlist,
+    denylist: state.denylist,
+    profiles: state.siteProfiles,
+  });
+  learningManagement.setState({
+    learning: state.learningWeights,
+    decisions: state.userDecisions,
+  });
   renderSmartScopeSection();
   await refreshSmartScopeStatus();
+  await modeEngineDiagnostics.initialize();
 }
 
 function renderUserPrefs() {
@@ -226,24 +401,24 @@ function renderUserPrefs() {
   autoValue.textContent = Number(currentUserPrefs.autoThreshold).toFixed(2);
   spaToggle.checked = currentUserPrefs.spaDetectionEnabled;
   if (focusDefaultToggle) {
-    focusDefaultToggle.checked = currentUserPrefs.focusDefaultEnabled !== false;
+    focusDefaultToggle.checked = currentUserPrefs.focusDefaultEnabled === true;
   }
   renderComfortVisualControls();
-  renderFocusControls();
+  renderFocusControls(currentUserPrefs);
 }
 
 function renderComfortVisualControls() {
-  currentComfortVisualPrefs = normalizeComfortVisualPrefs(currentUserPrefs?.modePrefs?.comfortVisual);
+  currentComfortVisualPrefs = getComfortVisualPrefsFromModePrefs(currentUserPrefs?.modePrefs);
   Object.entries(comfortVisualInputs).forEach(([key, input]) => {
     if (!input) return;
     input.checked = Boolean(currentComfortVisualPrefs[key]);
   });
+  applyComfortVisualFeaturePolicies();
 }
 
 function normalizeFocusPrefs(raw) {
   const defaults = MODE_PREFS_DEFAULTS?.[MODE_IDS.FOCUS] || {
     distractionDim: false,
-    ultraFocus: false,
     targetBoost: false,
     reduceMotion: false,
     readingRuler: false,
@@ -260,6 +435,7 @@ function normalizeFocusPrefs(raw) {
       base[key] = raw[key];
     }
   });
+  base.focusNotObscured = true;
 
   return base;
 }
@@ -272,9 +448,66 @@ function normalizeRange(value, min, max, fallback) {
   return Math.min(max, Math.max(min, numeric));
 }
 
-function renderFocusControls() {
+function getModeFeature(modeId, featureId) {
+  const sections = MODE_FEATURE_MODELS[modeId]?.sections || [];
+  for (const section of sections) {
+    const feature = section.features.find((candidate) => candidate.featureId === featureId);
+    if (feature) return feature;
+  }
+  return null;
+}
+
+function annotateFeatureControl(input, feature) {
+  if (!input || !feature) return;
+  const field = input.closest('.field');
+  if (!field) return;
+  field.dataset.featureId = feature.featureId;
+  field.dataset.controlPolicy = feature.controlPolicy;
+  field.dataset.availability = feature.availability;
+  if (feature.dependsOnFeatureId) {
+    field.dataset.dependsOnFeatureId = feature.dependsOnFeatureId;
+  } else {
+    delete field.dataset.dependsOnFeatureId;
+  }
+}
+
+function applyComfortVisualFeaturePolicies() {
+  Object.entries(COMFORT_VISUAL_PREF_FEATURE_IDS).forEach(([key, featureId]) => {
+    const input = comfortVisualInputs[key];
+    const feature = getModeFeature(MODE_IDS.COMFORT_VISUAL, featureId);
+    annotateFeatureControl(input, feature);
+    if (!input) return;
+    if (COMFORT_VISUAL_SAFETY_PREF_KEYS.includes(key) || feature?.controlPolicy === 'always_on') {
+      input.checked = true;
+      input.disabled = true;
+    } else {
+      input.disabled = false;
+    }
+  });
+}
+
+function applyFocusFeaturePolicies() {
+  Object.entries(FOCUS_PREF_FEATURE_IDS).forEach(([key, featureId]) => {
+    const input = focusInputs[key];
+    const feature = getModeFeature(MODE_IDS.FOCUS, featureId);
+    annotateFeatureControl(input, feature);
+  });
+
+  if (focusInputs.focusNotObscured) {
+    focusInputs.focusNotObscured.checked = true;
+    focusInputs.focusNotObscured.disabled = true;
+  }
+
+  if (focusInputs.overlayBlur) {
+    const overlayBlurFeature = getModeFeature(MODE_IDS.FOCUS, FEATURE_IDS.OVERLAY_BLUR);
+    annotateFeatureControl(focusInputs.overlayBlur, overlayBlurFeature);
+    focusInputs.overlayBlur.disabled = currentFocusPrefs?.distractionDim !== true;
+  }
+}
+
+function renderFocusControls(userPrefs = currentUserPrefs) {
   const focusModeId = MODE_IDS.FOCUS;
-  const modePrefs = isPlainObject(currentUserPrefs?.modePrefs) ? currentUserPrefs.modePrefs : {};
+  const modePrefs = isPlainObject(userPrefs?.modePrefs) ? userPrefs.modePrefs : {};
   const rawFocusPrefs = modePrefs[focusModeId];
   currentFocusPrefs = normalizeFocusPrefs(rawFocusPrefs);
 
@@ -285,7 +518,8 @@ function renderFocusControls() {
     focusInputs.readingRuler.checked = currentFocusPrefs.readingRuler === true;
   }
   if (focusInputs.ultraFocus) {
-    focusInputs.ultraFocus.checked = currentFocusPrefs.ultraFocus === true;
+    focusInputs.ultraFocus.checked = false;
+    focusInputs.ultraFocus.disabled = true;
   }
   if (focusInputs.targetBoost) {
     focusInputs.targetBoost.checked = currentFocusPrefs.targetBoost === true;
@@ -297,12 +531,16 @@ function renderFocusControls() {
     focusInputs.reduceMotion.checked = currentFocusPrefs.reduceMotion === true;
   }
 
-  const rawAlpha = currentUserPrefs?.focusOverlayAlpha ?? rawFocusPrefs?.distractionDimAlpha;
-  const rawHeight = currentUserPrefs?.readingRulerHeightPx ?? rawFocusPrefs?.readingRulerHeightPx;
-  const rawOpacity = currentUserPrefs?.readingRulerOpacity ?? rawFocusPrefs?.readingRulerOpacity;
+  const rawAlpha = userPrefs?.focusOverlayAlpha ?? rawFocusPrefs?.distractionDimAlpha;
+  const rawBlur = userPrefs?.focusOverlayBlurPx ?? rawFocusPrefs?.distractionDimBlurPx;
+  const rawHeight = userPrefs?.readingRulerHeightPx ?? rawFocusPrefs?.readingRulerHeightPx;
+  const rawOpacity = userPrefs?.readingRulerOpacity ?? rawFocusPrefs?.readingRulerOpacity;
 
   if (focusInputs.overlayAlpha) {
     focusInputs.overlayAlpha.value = normalizeRange(rawAlpha, 0, 1, 0.2);
+  }
+  if (focusInputs.overlayBlur) {
+    focusInputs.overlayBlur.value = normalizeRange(rawBlur, 0, 24, 0);
   }
   if (focusInputs.readingRulerHeight) {
     focusInputs.readingRulerHeight.value = normalizeRange(rawHeight, 40, 400, 120);
@@ -310,6 +548,7 @@ function renderFocusControls() {
   if (focusInputs.readingRulerOpacity) {
     focusInputs.readingRulerOpacity.value = normalizeRange(rawOpacity, 0, 0.6, 0.12);
   }
+  applyFocusFeaturePolicies();
 }
 
 function renderSmartScopeSection() {
@@ -317,6 +556,15 @@ function renderSmartScopeSection() {
   smartScopeToggle.checked = currentSmartScope.enabled === true;
   smartScopeLevel.value = currentSmartScope.level || SMARTSCOPE_LEVELS.CONSERVATIVE;
   smartScopeLevelField.hidden = !currentSmartScope.enabled;
+  if (smartScopeAdvancedTrigger && smartScopeAdvancedPanel) {
+    const disabled = !currentSmartScope.enabled;
+    smartScopeAdvancedTrigger.disabled = disabled;
+    smartScopeAdvancedTrigger.setAttribute('aria-disabled', String(disabled));
+    if (disabled) {
+      smartScopeAdvancedTrigger.setAttribute('aria-expanded', 'false');
+      smartScopeAdvancedPanel.hidden = true;
+    }
+  }
   if (smartScopeDebugToggle) {
     smartScopeDebugToggle.checked = currentSmartScope.debugEnabled === true;
   }
@@ -350,46 +598,6 @@ function renderSmartScopeOverrideList() {
     li.append(span, btn);
     smartScopeDomainList.appendChild(li);
   });
-}
-
-function renderLists() {
-  allowListEl.innerHTML = '';
-  denyListEl.innerHTML = '';
-  const render = (arr, container, kind) => {
-    if (!arr.length) {
-      const li = document.createElement('li');
-      li.className = 'list-item';
-      li.textContent = 'No domains';
-      container.appendChild(li);
-      return;
-    }
-    arr.forEach((domain) => {
-      const li = document.createElement('li');
-      li.className = 'list-item';
-      const span = document.createElement('span');
-      span.textContent = domain;
-      const btn = document.createElement('button');
-      btn.className = 'btn danger';
-      btn.textContent = 'Remove';
-      btn.addEventListener('click', async () => {
-        if (kind === 'allow') {
-          currentAllowlist = currentAllowlist.filter((d) => d !== domain);
-          await persistAllowlist();
-          renderLists();
-          showInlineStatus('success', 'Allowlist updated');
-        } else {
-          currentDenylist = currentDenylist.filter((d) => d !== domain);
-          await persistDenylist();
-          renderLists();
-          showInlineStatus('success', 'Denylist updated');
-        }
-      });
-      li.append(span, btn);
-      container.appendChild(li);
-    });
-  };
-  render(currentAllowlist, allowListEl, 'allow');
-  render(currentDenylist, denyListEl, 'deny');
 }
 
 async function refreshSmartScopeStatus() {
@@ -475,86 +683,43 @@ function formatSmartScopeAction(action) {
   return normalized;
 }
 
-function renderLearningTable() {
-  learningBody.innerHTML = '';
-  const rows = buildLearningRows(currentLearning, currentDecisions);
-  if (!rows.length) {
-    const tr = document.createElement('tr');
-    tr.className = 'empty-row';
-    const td = document.createElement('td');
-    td.colSpan = 6;
-    td.textContent = 'No learning data yet.';
-    tr.appendChild(td);
-    learningBody.appendChild(tr);
-    return;
+function bindEvents() {
+  setupNavigation();
+  setupAccordions();
+
+  if (statusRetryBtn) {
+    statusRetryBtn.addEventListener('click', async () => {
+      if (typeof lastRetryAction === 'function') {
+        const retry = lastRetryAction;
+        lastRetryAction = null;
+        statusRetryBtn.hidden = true;
+        await retry();
+      }
+    });
   }
 
-  rows.forEach(({ domain, modes, stage, weight, lastDecision }) => {
-    const tr = document.createElement('tr');
-    const domainTd = document.createElement('td');
-    domainTd.textContent = domain;
-    const modesTd = document.createElement('td');
-    modesTd.textContent = modes.join(', ');
-    const stageTd = document.createElement('td');
-    stageTd.textContent = stage;
-    const weightTd = document.createElement('td');
-    weightTd.textContent = weight;
-    const decisionTd = document.createElement('td');
-    decisionTd.textContent = lastDecision;
-    const actionTd = document.createElement('td');
-    const btn = document.createElement('button');
-    btn.className = 'btn danger';
-    btn.textContent = 'Reset';
-    btn.addEventListener('click', () => showDomainResetConfirm(domain));
-    actionTd.appendChild(btn);
-
-    tr.append(domainTd, modesTd, stageTd, weightTd, decisionTd, actionTd);
-    learningBody.appendChild(tr);
-  });
-}
-
-function buildLearningRows(learning, decisions) {
-  return Object.keys(learning).map((domain) => {
-    const modes = Object.keys(learning[domain] || {});
-    const stages = modes.map((m) => learning[domain][m].stage || LEARNING_STAGES.MANUAL);
-    const weights = modes.map((m) => Number(learning[domain][m].weight || 0).toFixed(2));
-    const decisionInfo = decisions[domain] || {};
-    const decisionModes = Object.keys(decisionInfo);
-    let lastDecision = '—';
-    if (decisionModes.length) {
-      const mode = decisionModes[0];
-      const decision = decisionInfo[mode]?.decision;
-      const ts = decisionInfo[mode]?.timestamp;
-      lastDecision = decision ? `${decision}${ts ? ` (${new Date(ts).toLocaleString()})` : ''}` : '—';
-    }
-    return {
-      domain,
-      modes: modes.length ? modes : ['—'],
-      stage: stages.length ? stages.join(', ') : LEARNING_STAGES.MANUAL,
-      weight: weights.length ? weights.join(', ') : '0.00',
-      lastDecision,
-    };
-  });
-}
-
-function bindEvents() {
   document.querySelectorAll('input[name="banner-position"]').forEach((input) => {
-    input.addEventListener('change', () => persistUserPrefs({ bannerPosition: input.value }));
+    input.addEventListener('change', () =>
+      persistUserPrefs({ bannerPosition: input.value }, { sectionId: 'general' }),
+    );
   });
   document.querySelectorAll('input[name="display-density"]').forEach((input) => {
-    input.addEventListener('change', () => persistUserPrefs({ displayDensity: input.value }));
+    input.addEventListener('change', () =>
+      persistUserPrefs({ displayDensity: input.value }, { sectionId: 'general' }),
+    );
   });
-  document.getElementById('reduced-motion').addEventListener('change', (e) => {
-    persistUserPrefs({ reducedMotion: e.target.checked });
+  document.getElementById('reduced-motion').addEventListener('change', async (e) => {
+    await persistUserPrefs({ reducedMotion: e.target.checked }, { sectionId: 'general' });
+    await requestReapplyActiveTab('prefs:reducedMotion');
   });
   document.getElementById('high-contrast').addEventListener('change', (e) => {
-    persistUserPrefs({ highContrast: e.target.checked });
+    persistUserPrefs({ highContrast: e.target.checked }, { sectionId: 'general' });
   });
   bindComfortVisualControls();
-  bindFocusControls();
+  bindFocusControls(currentUserPrefs);
   if (focusDefaultToggle) {
     focusDefaultToggle.addEventListener('change', async (event) => {
-      await persistUserPrefs({ focusDefaultEnabled: event.target.checked });
+      await persistUserPrefs({ focusDefaultEnabled: event.target.checked }, { sectionId: 'focus' });
       await requestReapplyActiveTab('prefs:focusDefaultEnabled');
     });
   }
@@ -563,115 +728,56 @@ function bindEvents() {
     const val = Number(e.target.value);
     suggestionValue.textContent = val.toFixed(2);
   });
-  suggestionSlider.addEventListener('change', (e) => {
+  suggestionSlider.addEventListener('change', async (e) => {
     const val = clampThreshold(Number(e.target.value));
     suggestionSlider.value = val;
     suggestionValue.textContent = Number(val).toFixed(2);
-    persistUserPrefs({ suggestionThreshold: val });
+    await persistUserPrefs({ suggestionThreshold: val }, { sectionId: 'suggestions' });
+    await requestReapplyActiveTab('prefs:suggestionThreshold');
   });
 
   autoSlider.addEventListener('input', (e) => {
     const val = Number(e.target.value);
     autoValue.textContent = val.toFixed(2);
   });
-  autoSlider.addEventListener('change', (e) => {
+  autoSlider.addEventListener('change', async (e) => {
     const val = clampThreshold(Number(e.target.value));
     autoSlider.value = val;
     autoValue.textContent = Number(val).toFixed(2);
-    persistUserPrefs({ autoThreshold: val });
+    await persistUserPrefs({ autoThreshold: val }, { sectionId: 'suggestions' });
+    await requestReapplyActiveTab('prefs:autoThreshold');
   });
 
-  cooldownSelect.addEventListener('change', (e) => {
-    persistUserPrefs({ cooldownDuration: Number(e.target.value) });
+  cooldownSelect.addEventListener('change', async (e) => {
+    await persistUserPrefs({ cooldownDuration: Number(e.target.value) }, { sectionId: 'suggestions' });
+    await requestReapplyActiveTab('prefs:cooldownDuration');
   });
 
   spaToggle.addEventListener('change', async (e) => {
     await onToggleSpaSupport(e.target.checked);
   });
 
-  document.getElementById('add-allow').addEventListener('click', async () => {
-    const validation = normalizeAndValidateDomain(allowInput.value);
-    if (!validation.ok) {
-      showInlineStatus('error', validation.reason);
-      return;
-    }
-    const domain = validation.domain;
-    if (!currentAllowlist.includes(domain)) {
-      currentAllowlist.push(domain);
-      currentAllowlist.sort();
-      await persistAllowlist();
-      renderLists();
-      showInlineStatus('success', 'Allowlist updated');
-    } else {
-      showInlineStatus('info', 'Domain already in allowlist');
-    }
-    allowInput.value = '';
-  });
-
-  document.getElementById('add-deny').addEventListener('click', async () => {
-    const validation = normalizeAndValidateDomain(denyInput.value);
-    if (!validation.ok) {
-      showInlineStatus('error', validation.reason);
-      return;
-    }
-    const domain = validation.domain;
-    if (!currentDenylist.includes(domain)) {
-      currentDenylist.push(domain);
-      currentDenylist.sort();
-      await persistDenylist();
-      renderLists();
-      showInlineStatus('success', 'Denylist updated');
-    } else {
-      showInlineStatus('info', 'Domain already in denylist');
-    }
-    denyInput.value = '';
-  });
-
-  document.getElementById('reset-learning-all').addEventListener('click', () => {
-    resetLearningConfirm.hidden = false;
-  });
-  document.getElementById('cancel-reset-learning').addEventListener('click', () => {
-    resetLearningConfirm.hidden = true;
-  });
-  document.getElementById('confirm-reset-learning-btn').addEventListener('click', async () => {
-    resetLearningConfirm.hidden = true;
-    await onResetAllLearningConfirmed();
-  });
-
-  document.getElementById('export-data').addEventListener('click', () => onExportData());
-  document.getElementById('import-data').addEventListener('click', () => importFileInput.click());
-  importFileInput.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      await onImportData(file);
-      importFileInput.value = '';
-    }
-  });
-
-  document.getElementById('reset-all-data').addEventListener('click', () => {
-    resetAllConfirm.hidden = false;
-  });
-  document.getElementById('cancel-reset-all').addEventListener('click', () => {
-    resetAllConfirm.hidden = true;
-  });
-  document.getElementById('confirm-reset-all-btn').addEventListener('click', async () => {
-    resetAllConfirm.hidden = true;
-    await onResetAllDataConfirmed();
+  smartScopeDomainInput.addEventListener('blur', () => {
+    handleDomainBlur(smartScopeDomainInput.value, smartScopeDomainFeedback);
   });
 
   smartScopeToggle.addEventListener('change', async () => {
     smartScopeLevelField.hidden = !smartScopeToggle.checked;
-    await persistSmartScopeConfig({ enabled: smartScopeToggle.checked, level: smartScopeLevel.value });
+    await persistSmartScopeConfig(
+      { enabled: smartScopeToggle.checked, level: smartScopeLevel.value },
+      { sectionId: 'smartscope' },
+    );
   });
 
   smartScopeLevel.addEventListener('change', async (e) => {
-    await persistSmartScopeConfig({ level: e.target.value });
+    await persistSmartScopeConfig({ level: e.target.value }, { sectionId: 'smartscope' });
   });
 
   smartScopeDomainSave.addEventListener('click', async () => {
     const validation = normalizeAndValidateDomain(smartScopeDomainInput.value);
     if (!validation.ok) {
       showSmartScopeStatus('error', validation.reason);
+      setInlineFeedback(smartScopeDomainFeedback, validation.reason);
       return;
     }
 
@@ -686,6 +792,7 @@ function bindEvents() {
     await persistSmartScopeConfig({ perDomain });
     renderSmartScopeOverrideList();
     smartScopeDomainInput.value = '';
+    setInlineFeedback(smartScopeDomainFeedback, '');
   });
 
   if (smartScopePanic) {
@@ -702,6 +809,7 @@ function bindEvents() {
           statusMessage: enabled
             ? 'SmartScope debug logging enabled'
             : 'SmartScope debug logging disabled',
+          sectionId: 'smartscope',
         },
       );
     });
@@ -714,20 +822,35 @@ function bindEvents() {
   if (smartScopeDebugClear) {
     smartScopeDebugClear.addEventListener('click', clearSmartScopeDebugLogs);
   }
+
+  modeEngineDiagnosticsView.bind({
+    onRefresh: () => modeEngineDiagnostics.refresh({ showStatus: true, reloadTargets: true }),
+    onExport: () => modeEngineDiagnostics.exportSnapshot(),
+    onSelect: (tabId) => modeEngineDiagnostics.selectTarget(tabId),
+  });
+  window.addEventListener('pagehide', () => {
+    dataManagement.dispose();
+    learningManagement.dispose();
+    modeEngineDiagnostics.dispose();
+  }, { once: true });
 }
 
 function bindComfortVisualControls() {
   Object.entries(comfortVisualInputs).forEach(([key, input]) => {
     if (!input) return;
-    input.addEventListener('change', (event) => updateComfortVisualPref(key, event.target.checked));
+    input.addEventListener('change', (event) =>
+      updateComfortVisualPref(key, event.target.checked, { sectionId: 'comfort-visual' }),
+    );
   });
 }
 
-function bindFocusControls() {
+function bindFocusControls(userPrefs = currentUserPrefs) {
+  if (userPrefs) {
+    currentUserPrefs = userPrefs;
+  }
   const checkboxMap = {
     distractionDim: focusInputs.distractionDim,
     readingRuler: focusInputs.readingRuler,
-    ultraFocus: focusInputs.ultraFocus,
     targetBoost: focusInputs.targetBoost,
     focusNotObscured: focusInputs.focusNotObscured,
     reduceMotion: focusInputs.reduceMotion,
@@ -735,14 +858,24 @@ function bindFocusControls() {
 
   Object.entries(checkboxMap).forEach(([key, input]) => {
     if (!input) return;
-    input.addEventListener('change', (event) => updateFocusPref(key, event.target.checked));
+    input.addEventListener('change', (event) =>
+      updateFocusPrefs({ [key]: event.target.checked }, { sectionId: 'focus' }),
+    );
   });
 
   if (focusInputs.overlayAlpha) {
     focusInputs.overlayAlpha.addEventListener('change', (event) => {
       const value = normalizeRange(event.target.value, 0, 1, 0.2);
       focusInputs.overlayAlpha.value = value;
-      updateFocusPref('distractionDimAlpha', value);
+      updateFocusPrefs({ distractionDimAlpha: value }, { sectionId: 'focus' });
+    });
+  }
+
+  if (focusInputs.overlayBlur) {
+    focusInputs.overlayBlur.addEventListener('change', (event) => {
+      const value = normalizeRange(event.target.value, 0, 24, 0);
+      focusInputs.overlayBlur.value = value;
+      updateFocusPrefs({ distractionDimBlurPx: value }, { sectionId: 'focus' });
     });
   }
 
@@ -750,7 +883,7 @@ function bindFocusControls() {
     focusInputs.readingRulerHeight.addEventListener('change', (event) => {
       const value = normalizeRange(event.target.value, 40, 400, 120);
       focusInputs.readingRulerHeight.value = value;
-      updateFocusPref('readingRulerHeightPx', value);
+      updateFocusPrefs({ readingRulerHeightPx: value }, { sectionId: 'focus' });
     });
   }
 
@@ -758,9 +891,138 @@ function bindFocusControls() {
     focusInputs.readingRulerOpacity.addEventListener('change', (event) => {
       const value = normalizeRange(event.target.value, 0, 0.6, 0.12);
       focusInputs.readingRulerOpacity.value = value;
-      updateFocusPref('readingRulerOpacity', value);
+      updateFocusPrefs({ readingRulerOpacity: value }, { sectionId: 'focus' });
     });
   }
+}
+
+function setupNavigation() {
+  const navLinks = Array.from(document.querySelectorAll('[data-section-link]'));
+  const isAutoScrollingRef = { current: false };
+  const autoScrollTargetIdRef = { current: null };
+  const autoScrollUnlockTimerRef = { current: null };
+  const getLinkSectionId = (link) => {
+    const explicit = link.dataset.sectionLink;
+    if (explicit) return explicit;
+    const href = link.getAttribute('href') || '';
+    if (href.startsWith('#')) return href.slice(1);
+    return href;
+  };
+  const setActiveSection = (sectionId) => {
+    if (!sectionId) return;
+    navLinks.forEach((link) => {
+      const linkSectionId = getLinkSectionId(link);
+      const isActive = linkSectionId === sectionId;
+      link.classList.toggle('active', isActive);
+      if (isActive) {
+        link.setAttribute('aria-current', 'page');
+      } else {
+        link.removeAttribute('aria-current');
+      }
+    });
+  };
+  const unlockAutoScroll = () => {
+    isAutoScrollingRef.current = false;
+    autoScrollTargetIdRef.current = null;
+    if (autoScrollUnlockTimerRef.current) {
+      window.clearTimeout(autoScrollUnlockTimerRef.current);
+      autoScrollUnlockTimerRef.current = null;
+    }
+  };
+  const startAutoScrollUnlockDebounce = () => {
+    if (autoScrollUnlockTimerRef.current) {
+      window.clearTimeout(autoScrollUnlockTimerRef.current);
+    }
+    autoScrollUnlockTimerRef.current = window.setTimeout(() => {
+      unlockAutoScroll();
+    }, 200);
+  };
+  const jumpToSection = (sectionId) => {
+    if (!sectionId) return;
+    const target = document.getElementById(sectionId);
+    if (!target) return;
+    setActiveSection(sectionId);
+    isAutoScrollingRef.current = true;
+    autoScrollTargetIdRef.current = sectionId;
+    target.scrollIntoView({ behavior: getOptionsScrollBehavior(), block: 'start' });
+    startAutoScrollUnlockDebounce();
+  };
+
+  navLinks.forEach((link) => {
+    link.addEventListener('click', (event) => {
+      const targetId = link.getAttribute('href')?.slice(1);
+      event.preventDefault();
+      jumpToSection(targetId);
+    });
+  });
+
+  const sections = Array.from(document.querySelectorAll('[data-section]'));
+  if (!sections.length) return;
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        if (isAutoScrollingRef.current) {
+          if (entry.target.id !== autoScrollTargetIdRef.current) {
+            return;
+          }
+          setActiveSection(entry.target.id);
+          unlockAutoScroll();
+          return;
+        }
+        setActiveSection(entry.target.id);
+      });
+    },
+    { rootMargin: '-20% 0px -70% 0px', threshold: 0.1 },
+  );
+
+  sections.forEach((section) => observer.observe(section));
+
+  const initialHash = window.location.hash?.slice(1);
+  if (initialHash) {
+    setActiveSection(initialHash);
+  }
+
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (isAutoScrollingRef.current) {
+        startAutoScrollUnlockDebounce();
+      }
+    },
+    { passive: true },
+  );
+}
+
+function setupAccordions() {
+  const triggers = Array.from(document.querySelectorAll('.accordion-trigger'));
+  triggers.forEach((trigger) => {
+    trigger.addEventListener('click', () => {
+      const panelId = trigger.getAttribute('aria-controls');
+      if (!panelId) return;
+      const panel = document.getElementById(panelId);
+      if (!panel) return;
+      const expanded = trigger.getAttribute('aria-expanded') === 'true';
+      trigger.setAttribute('aria-expanded', String(!expanded));
+      panel.hidden = expanded;
+    });
+  });
+}
+
+function setInlineFeedback(element, message) {
+  if (!element) return;
+  element.textContent = message;
+}
+
+function handleDomainBlur(value, feedbackEl) {
+  if (!feedbackEl) return;
+  if (!value.trim()) {
+    setInlineFeedback(feedbackEl, '');
+    return;
+  }
+  const validation = normalizeAndValidateDomain(value);
+  setInlineFeedback(feedbackEl, validation.ok ? '' : validation.reason);
 }
 
 async function requestReapplyActiveTab(reason) {
@@ -780,16 +1042,23 @@ async function requestReapplyActiveTab(reason) {
   }
 }
 
-async function updateComfortVisualPref(key, value) {
-  const basePrefs = normalizeComfortVisualPrefs(currentComfortVisualPrefs);
-  const mergedPrefs = mergeComfortVisualPrefs(basePrefs, { [key]: value });
-  const modePrefs = isPlainObject(currentUserPrefs?.modePrefs) ? currentUserPrefs.modePrefs : {};
-  await persistUserPrefs({ modePrefs: { ...modePrefs, comfortVisual: mergedPrefs } });
-  currentComfortVisualPrefs = mergedPrefs;
-  await requestReapplyActiveTab('prefs:comfortVisual');
+async function updateComfortVisualPref(key, value, options = {}) {
+  const runUpdate = async () => {
+    const modePrefs = isPlainObject(currentUserPrefs?.modePrefs) ? currentUserPrefs.modePrefs : {};
+    const basePrefs = getComfortVisualPrefsFromModePrefs(modePrefs);
+    const mergedPrefs = mergeComfortVisualPrefs(basePrefs, { [key]: value });
+    await persistUserPrefs({ modePrefs: withComfortVisualPrefs(modePrefs, mergedPrefs) }, options);
+    currentComfortVisualPrefs = mergedPrefs;
+    renderComfortVisualControls();
+    await requestReapplyActiveTab('prefs:comfortVisual');
+  };
+
+  const nextWrite = comfortVisualPrefWriteQueue.catch(() => {}).then(runUpdate);
+  comfortVisualPrefWriteQueue = nextWrite.catch(() => {});
+  return nextWrite;
 }
 
-async function updateFocusPref(key, value) {
+async function updateFocusPrefs(patch, options = {}) {
   const focusModeId = MODE_IDS.FOCUS;
   const modePrefs = isPlainObject(currentUserPrefs?.modePrefs) ? currentUserPrefs.modePrefs : {};
   const rawFocusPrefs = isPlainObject(modePrefs[focusModeId]) ? modePrefs[focusModeId] : {};
@@ -797,20 +1066,26 @@ async function updateFocusPref(key, value) {
   const focusPatch = { ...rawFocusPrefs, ...basePrefs };
   const topLevelPatch = {};
 
-  if (key === 'distractionDimAlpha') {
-    focusPatch.distractionDimAlpha = value;
-    topLevelPatch.focusOverlayAlpha = value;
-  } else if (key === 'readingRulerHeightPx') {
-    focusPatch.readingRulerHeightPx = value;
-    topLevelPatch.readingRulerHeightPx = value;
-  } else if (key === 'readingRulerOpacity') {
-    focusPatch.readingRulerOpacity = value;
-    topLevelPatch.readingRulerOpacity = value;
-  } else if (Object.prototype.hasOwnProperty.call(basePrefs, key)) {
-    focusPatch[key] = Boolean(value);
-  } else {
-    return;
-  }
+  Object.entries(patch || {}).forEach(([key, value]) => {
+    if (key === 'distractionDimAlpha') {
+      focusPatch.distractionDimAlpha = value;
+      topLevelPatch.focusOverlayAlpha = value;
+    } else if (key === 'distractionDimBlurPx') {
+      focusPatch.distractionDimBlurPx = value;
+      topLevelPatch.focusOverlayBlurPx = value;
+    } else if (key === 'readingRulerHeightPx') {
+      focusPatch.readingRulerHeightPx = value;
+      topLevelPatch.readingRulerHeightPx = value;
+    } else if (key === 'readingRulerOpacity') {
+      focusPatch.readingRulerOpacity = value;
+      topLevelPatch.readingRulerOpacity = value;
+    } else if (key === 'focusNotObscured') {
+      focusPatch.focusNotObscured = true;
+    } else if (Object.prototype.hasOwnProperty.call(basePrefs, key)) {
+      focusPatch[key] = Boolean(value);
+    }
+  });
+  focusPatch.focusNotObscured = true;
 
   await persistUserPrefs({
     ...topLevelPatch,
@@ -818,64 +1093,111 @@ async function updateFocusPref(key, value) {
       ...modePrefs,
       [focusModeId]: focusPatch,
     },
-  });
-  currentFocusPrefs = focusPatch;
+  }, options);
+  currentFocusPrefs = normalizeFocusPrefs(focusPatch);
+  renderFocusControls(currentUserPrefs);
   await requestReapplyActiveTab('prefs:focus');
 }
 
 async function persistUserPrefs(patch, options = {}) {
-  const current = isPlainObject(currentUserPrefs) ? currentUserPrefs : {};
-  const next = { ...current, ...patch };
+  try {
+    currentUserPrefs = await mutateLocalValue(STORAGE_KEYS.USER_PREFS, (storedPrefs) => {
+      const current = isPlainObject(storedPrefs) ? storedPrefs : {};
+      const next = { ...current, ...patch };
 
-  if (isPlainObject(patch?.smartScope)) {
-    next.smartScope = { ...(isPlainObject(current.smartScope) ? current.smartScope : {}), ...patch.smartScope };
+      if (isPlainObject(patch?.smartScope)) {
+        next.smartScope = { ...(isPlainObject(current.smartScope) ? current.smartScope : {}), ...patch.smartScope };
+      }
+
+      if (isPlainObject(patch?.modePrefs)) {
+        next.modePrefs = { ...(isPlainObject(current.modePrefs) ? current.modePrefs : {}), ...patch.modePrefs };
+      }
+
+      return next;
+    });
+    if (options.showStatus === false) {
+      return;
+    }
+    const message = options.statusMessage || 'Saved ✓';
+    showInlineStatus('success', message);
+    showSectionStatus(options.sectionId, 'success', message);
+  } catch (error) {
+    const message = error?.message || 'Unable to save preferences';
+    showInlineStatus('error', message, {
+      retry: () => persistUserPrefs(patch, options),
+    });
+    showSectionStatus(options.sectionId, 'error', message);
   }
-
-  if (isPlainObject(patch?.modePrefs)) {
-    next.modePrefs = { ...(isPlainObject(current.modePrefs) ? current.modePrefs : {}), ...patch.modePrefs };
-  }
-
-  currentUserPrefs = next;
-  await chrome.storage.local.set({ [STORAGE_KEYS.USER_PREFS]: currentUserPrefs });
-  if (options.showStatus === false) {
-    return;
-  }
-
-  const message = options.statusMessage || 'Preferences saved';
-  showInlineStatus('success', message);
 }
 
-async function persistAllowlist() {
-  await chrome.storage.local.set({ [STORAGE_KEYS.ALLOWLIST]: currentAllowlist });
-}
-
-async function persistDenylist() {
-  await chrome.storage.local.set({ [STORAGE_KEYS.DENYLIST]: currentDenylist });
-}
-
-function showStatus(element, kind, message) {
+function showStatus(element, kind, message, options = {}) {
+  if (!element) return;
+  const { autoHide = true, timeout = 4000 } = options;
   element.textContent = message;
-  element.className = `status status-${kind}`;
+  element.className = `status-pill status-${kind}`;
   element.hidden = false;
-  setTimeout(() => {
-    element.hidden = true;
-  }, 5000);
+
+  if (autoHide) {
+    window.setTimeout(() => {
+      element.hidden = true;
+    }, timeout);
+  }
 }
 
-function showInlineStatus(kind, message) {
-  showStatus(statusEl, kind, message);
+function showInlineStatus(kind, message, options = {}) {
+  if (!statusEl) return;
+  if (statusTimeoutId) {
+    window.clearTimeout(statusTimeoutId);
+    statusTimeoutId = null;
+  }
+  const autoHide = kind !== 'error';
+  const timeout = kind === 'success' ? 1800 : 4000;
+  statusEl.textContent = message;
+  statusEl.className = `status-pill status-${kind}`;
+  statusEl.hidden = false;
+  if (statusRetryBtn) {
+    if (kind === 'error' && typeof options.retry === 'function') {
+      statusRetryBtn.hidden = false;
+      lastRetryAction = options.retry;
+    } else {
+      statusRetryBtn.hidden = true;
+      lastRetryAction = null;
+    }
+  }
+  if (autoHide) {
+    statusTimeoutId = window.setTimeout(() => {
+      statusEl.hidden = true;
+      statusTimeoutId = null;
+    }, timeout);
+  }
+}
+
+function showSectionStatus(sectionId, kind, message) {
+  if (!sectionId) return;
+  const element = sectionStatusMap.get(sectionId);
+  if (!element) return;
+  const autoHide = kind !== 'error';
+  const timeout = kind === 'success' ? 1800 : 4000;
+  showStatus(element, kind, message, { autoHide, timeout });
 }
 
 function showSpaStatus(kind, message) {
-  showStatus(spaStatus, kind, message);
+  showStatus(spaStatus, kind, message, { autoHide: kind !== 'error' });
+  showSectionStatus('advanced', kind, message);
 }
 
 function showSmartScopeStatus(kind, message) {
-  showStatus(smartScopeStatus, kind, message);
+  showStatus(smartScopeStatus, kind, message, { autoHide: kind !== 'error' });
+  showSectionStatus('smartscope', kind, message);
 }
 
 function showSmartScopeDebugStatus(kind, message) {
-  showStatus(smartScopeDebugStatus, kind, message);
+  showStatus(smartScopeDebugStatus, kind, message, { autoHide: kind !== 'error' });
+}
+
+function showDebugSnapshotStatus(kind, message) {
+  showStatus(debugSnapshotStatus, kind, message, { autoHide: kind !== 'error' });
+  showSectionStatus('advanced', kind, message);
 }
 
 function clampThreshold(val) {
@@ -904,33 +1226,6 @@ async function onToggleSpaSupport(nextEnabled) {
   }
 }
 
-async function onExportData() {
-  const manifest = chrome.runtime.getManifest();
-  const payload = await buildExportPayload(manifest.version);
-  const date = new Date().toISOString().slice(0, 10);
-  const filename = `aura-export-${date}.json`;
-  downloadExport(payload, filename);
-  showInlineStatus('success', 'Export created');
-}
-
-async function onImportData(file) {
-  try {
-    const text = await file.text();
-    const payload = JSON.parse(text);
-    const result = await importPayloadAndApply(payload);
-    showInlineStatus('success', `Imported ${result.domains} domains, ${result.modes} modes`);
-    await loadAndRenderState();
-  } catch (err) {
-    showInlineStatus('error', `Import failed: ${err.message || err}`);
-  }
-}
-
-async function onResetAllDataConfirmed() {
-  await resetAllData();
-  await loadAndRenderState();
-  showInlineStatus('success', 'All data cleared');
-}
-
 async function persistSmartScopeConfig(patch = {}, options = {}) {
   const merged = normalizeSmartScopeConfig({
     ...currentSmartScope,
@@ -939,6 +1234,7 @@ async function persistSmartScopeConfig(patch = {}, options = {}) {
   });
 
   const statusHandler = options.statusHandler || showSmartScopeStatus;
+  const sectionId = options.sectionId || 'smartscope';
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -948,8 +1244,10 @@ async function persistSmartScopeConfig(patch = {}, options = {}) {
 
     if (response?.ok) {
       currentSmartScope = merged;
-      currentUserPrefs.smartScope = merged;
-      await chrome.storage.local.set({ [STORAGE_KEYS.USER_PREFS]: currentUserPrefs });
+      currentUserPrefs = await mutateLocalValue(STORAGE_KEYS.USER_PREFS, (storedPrefs) => ({
+        ...(isPlainObject(storedPrefs) ? storedPrefs : {}),
+        smartScope: merged,
+      }));
       renderSmartScopeSection();
 
       if (options.showStatus === false) {
@@ -961,14 +1259,17 @@ async function persistSmartScopeConfig(patch = {}, options = {}) {
         options.statusMessage ||
         (merged.enabled ? 'SmartScope settings saved' : 'SmartScope disabled. Baseline STRICT enforced.');
       statusHandler(statusKind, message);
+      showSectionStatus(sectionId, statusKind, message);
       if (!merged.enabled && statusHandler === showSmartScopeStatus) {
         statusHandler('info', 'Use panic reset to clean open tabs if needed.');
       }
     } else {
       statusHandler('error', response?.error || 'Unable to save SmartScope settings');
+      showSectionStatus(sectionId, 'error', response?.error || 'Unable to save SmartScope settings');
     }
   } catch (error) {
     statusHandler('error', error?.message || 'Unable to save SmartScope settings');
+    showSectionStatus(sectionId, 'error', error?.message || 'Unable to save SmartScope settings');
   }
 }
 
@@ -987,7 +1288,7 @@ async function exportSmartScopeDebugLogs() {
 
 async function clearSmartScopeDebugLogs() {
   try {
-    await chrome.storage.local.remove('smartScopeDebugLogs');
+    await removeLocalValue('smartScopeDebugLogs');
     showSmartScopeDebugStatus('success', 'SmartScope debug logs cleared');
   } catch (error) {
     showSmartScopeDebugStatus('error', error?.message || 'Unable to clear debug logs');
@@ -999,8 +1300,10 @@ async function onPanicResetClicked() {
     const response = await chrome.runtime.sendMessage({ action: ACTIONS.SMARTSCOPE_RESET_V1 });
     if (response?.ok) {
       currentSmartScope = normalizeSmartScopeConfig();
-      currentUserPrefs.smartScope = currentSmartScope;
-      await chrome.storage.local.set({ [STORAGE_KEYS.USER_PREFS]: currentUserPrefs });
+      currentUserPrefs = await mutateLocalValue(STORAGE_KEYS.USER_PREFS, (storedPrefs) => ({
+        ...(isPlainObject(storedPrefs) ? storedPrefs : {}),
+        smartScope: currentSmartScope,
+      }));
       renderSmartScopeSection();
       const cleanedTabs = Number.isFinite(response.cleanedTabs) ? response.cleanedTabs : 0;
       showSmartScopeStatus('success', `SmartScope reset. Cleaned ${cleanedTabs} tab(s).`);
@@ -1015,93 +1318,10 @@ async function onPanicResetClicked() {
   }
 }
 
-async function onResetAllLearningConfirmed() {
-  const reset = {};
-  for (const [domain, perMode] of Object.entries(currentLearning)) {
-    reset[domain] = {};
-    Object.keys(perMode || {}).forEach((modeId) => {
-      reset[domain][modeId] = { stage: LEARNING_STAGES.MANUAL, weight: 0 };
-    });
-  }
-  currentLearning = reset;
-  await chrome.storage.local.set({ [STORAGE_KEYS.LEARNING_WEIGHTS]: reset });
-  renderLearningTable();
-  showInlineStatus('success', 'Learning reset');
-}
-
-async function onResetDomainLearningConfirmed(domain) {
-  if (!currentLearning[domain]) {
-    showInlineStatus('info', 'No learning data for domain');
-    return;
-  }
-
-  const updated = { ...currentLearning };
-  updated[domain] = {};
-  Object.keys(currentLearning[domain]).forEach((modeId) => {
-    updated[domain][modeId] = { stage: LEARNING_STAGES.MANUAL, weight: 0 };
-  });
-
-  currentLearning = updated;
-  await chrome.storage.local.set({ [STORAGE_KEYS.LEARNING_WEIGHTS]: updated });
-  renderLearningTable();
-  showInlineStatus('success', `Learning reset for ${domain}`);
-}
-
-function showDomainResetConfirm(domain) {
-  const existing = document.getElementById('confirm-reset-domain');
-  if (existing) existing.remove();
-  const panel = document.createElement('div');
-  panel.className = 'confirm';
-  panel.id = 'confirm-reset-domain';
-  const text = document.createElement('p');
-  text.textContent = `Reset learning for ${domain}?`;
-  const actions = document.createElement('div');
-  actions.className = 'confirm-actions';
-  const cancel = document.createElement('button');
-  cancel.className = 'btn';
-  cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', () => panel.remove());
-  const confirm = document.createElement('button');
-  confirm.className = 'btn danger';
-  confirm.textContent = 'Confirm reset';
-  confirm.addEventListener('click', async () => {
-    panel.remove();
-    await onResetDomainLearningConfirmed(domain);
-  });
-  actions.append(cancel, confirm);
-  panel.append(text, actions);
-  learningBody.parentElement.appendChild(panel);
-}
-
 function normalizeAndValidateDomain(input) {
-  const trimmed = (input || '').trim().toLowerCase();
-  if (!trimmed) return { ok: false, reason: 'Domain required' };
-
-  let host;
-  try {
-    host = new URL(`https://${trimmed}`).hostname;
-  } catch (e) {
-    return { ok: false, reason: 'Invalid domain' };
-  }
-
-  if (!host || host.includes('/')) return { ok: false, reason: 'Invalid domain' };
-  const normalized = toBaseDomain(host);
-  if (!normalized) return { ok: false, reason: 'Domain must be eTLD+1 (example.com)' };
-  return { ok: true, domain: normalized };
-}
-
-function toBaseDomain(host) {
-  const parts = host.split('.').filter(Boolean);
-  if (parts.length < 2) return null;
-
-  // Heuristic for multi-part TLDs (e.g., co.uk). If last part length is 2 and
-  // the preceding part length is <= 3, keep the last three labels. Otherwise,
-  // keep the last two labels (eTLD+1 approximation).
-  if (parts.length >= 3 && parts[parts.length - 1].length === 2 && parts[parts.length - 2].length <= 3) {
-    return parts.slice(-3).join('.');
-  }
-
-  return parts.slice(-2).join('.');
+  const parsed = parseStrictDomainInput(input);
+  if (!parsed.ok) return parsed;
+  return { ok: true, domain: parsed.siteKey };
 }
 
 initOptionsPage();

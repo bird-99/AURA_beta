@@ -3,10 +3,6 @@ __AURA_SCOPE__ {
   --aura-focus-measure: 70ch;
 }
 
-__AURA_SCOPE__ :is(aside, nav, .ad, .sidebar, .related-content) {
-  display: none;
-}
-
 __AURA_SCOPE__ :is(main, article, [role="main"]) {
   max-inline-size: min(var(--aura-focus-measure), 100%);
   width: min(100%, var(--aura-focus-measure));
@@ -19,6 +15,7 @@ __AURA_SCOPE__ :is(p, li, blockquote, pre, code, img, video, picture, figure) {
   transition: none;
 }
 
-__AURA_SCOPE__ :is([aria-hidden="true"], .aura-focus-hide) {
-  display: none;
+__AURA_SCOPE__ .aura-ultra-focus-zoomed {
+  backface-visibility: hidden;
+  will-change: transform;
 }

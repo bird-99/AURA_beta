@@ -1,5 +1,5 @@
 import { STORAGE_KEYS } from '../shared/constants.js';
-import { isValidTabId } from '../shared/utils.js';
+import { isValidTabId, mutateSessionValue } from '../shared/utils.js';
 
 const EMPTY_STATE = Object.freeze({});
 
@@ -92,9 +92,7 @@ export async function patchRuntimeState(patch) {
       console.warn('[RuntimeState] chrome.storage.session unavailable');
       return;
     }
-    const state = await getRuntimeState();
-    const merged = mergeRuntimeState(state, patch);
-    await chrome.storage.session.set({ [STORAGE_KEYS.RUNTIME_STATE]: merged });
+    await mutateSessionValue(STORAGE_KEYS.RUNTIME_STATE, (state) => mergeRuntimeState(state, patch));
   } catch (error) {
     console.warn('[RuntimeState] Failed to patch runtime state:', error);
   }

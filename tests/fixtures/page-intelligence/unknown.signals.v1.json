@@ -1,0 +1,57 @@
+{
+  "name": "unknown",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_unknown_v1",
+    "routeEpoch": "aura_pse_route_unknown_v1",
+    "viewport": { "w": 1280, "h": 720 },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 0,
+      "formCount": 0,
+      "tableCount": 0,
+      "mediaCount": 1,
+      "fixedOrStickyCount": 4,
+      "modalLikeCount": 1
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.3,
+      "linkDensity": 0.24,
+      "interactiveDensity": 0.4,
+      "mediaDensity": 0.18,
+      "formDensity": 0.1,
+      "tableDensity": 0.08,
+      "viewportCoverage": 0.88
+    },
+    "blocks": [
+      {
+        "blockId": "b_unknown_shell",
+        "roleHint": "UNKNOWN",
+        "rectRatio": { "xRatio": 0.02, "yRatio": 0.02, "widthRatio": 0.96, "heightRatio": 0.94, "visibleRatio": 0.82 },
+        "metrics": {
+          "textDensity": 0.28,
+          "linkDensity": 0.22,
+          "interactiveDensity": 0.42,
+          "mediaDensity": 0.14,
+          "formDensity": 0.1,
+          "tableDensity": 0.1,
+          "viewportCoverage": 0.8
+        },
+        "flags": ["UNKNOWN_LOW_CONFIDENCE", "TOP_CANDIDATES_AMBIGUOUS"]
+      }
+    ],
+    "stats": { "elapsedMs": 12, "nodesScanned": 1100, "candidatesSeen": 20, "budgetHit": false }
+  },
+  "expected": {
+    "pageType": "UNKNOWN",
+    "minConfidence": 0,
+    "maxConfidence": 0.5,
+    "selectedScopeBlockId": null,
+    "allowedActions": [],
+    "deniedActions": ["READING_COMFORT_TYPOGRAPHY", "FOCUS_VISIBILITY", "REDUCE_MOTION", "TARGET_SIZE"],
+    "requiredReasons": ["UNKNOWN_LOW_CONFIDENCE", "TOP_CANDIDATES_AMBIGUOUS"],
+    "requiredProblems": ["LOW_CONFIDENCE_PAGE_TYPE", "HIGH_LAYOUT_RISK", "HIGH_INTERACTION_RISK", "MODAL_OVERLAY_PRESENT"],
+    "riskBands": { "layoutRisk": "HIGH", "interactionRisk": "HIGH" }
+  }
+}

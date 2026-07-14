@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect } from '@playwright/test';
+import { writeAxeResultArtifact } from './helpers/axe-artifacts.js';
 
 function summarizeViolations(violations) {
   return violations
@@ -20,6 +21,7 @@ export async function expectNoSeriousA11yViolations(page) {
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa'])
     .analyze();
+  await writeAxeResultArtifact(results, { page });
 
   const blockingViolations = results.violations.filter((violation) =>
     ['serious', 'critical'].includes(violation.impact ?? '')

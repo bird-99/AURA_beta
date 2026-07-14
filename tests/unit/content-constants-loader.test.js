@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import '../../content/content-bootstrap.runtime.js';
+import '../../content/content-message-router.runtime.js';
 
 import {
   ACTIONS,
+  CONTENT_MESSAGE_ROUTES_V1,
+  CONTENT_ROUTE_OWNERSHIP,
   DECISIONS,
   MODE_ENGINE_FLAG_DEFAULTS,
   MODE_IDS,
@@ -21,6 +25,8 @@ const FEATURE_FLAGS_REQUEST_TYPE = 'AURA_GET_FEATURE_FLAGS_V1';
 
 const constantsPayload = {
   ACTIONS,
+  CONTENT_MESSAGE_ROUTES_V1,
+  CONTENT_ROUTE_OWNERSHIP,
   DECISIONS,
   MODE_ENGINE_FLAG_DEFAULTS,
   MODE_IDS,
@@ -110,6 +116,7 @@ function setupGlobals(sendMessageImpl) {
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
     matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
   };
+  global.window.top = global.window;
 
   global.document = new StubDocument();
 
@@ -162,13 +169,23 @@ function setupGlobals(sendMessageImpl) {
 
 }
 
+async function waitForTestHook(getter, { timeoutMs = 2000, stepMs = 5, label = 'test hook' } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const value = getter();
+    if (value) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+  throw new Error(`waitForTestHook timed out after ${timeoutMs}ms waiting for ${label}`);
+}
+
 async function loadContentMainWithTestHooks() {
   await import(`../../content/content-main.js?run=${Date.now()}`);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  const loader = global.window?.AURA?.__TEST_LOAD_SHARED_CONSTANTS__;
-  assert.equal(typeof loader, 'function');
-  return loader;
+  return waitForTestHook(() => global.window?.AURA?.__TEST_LOAD_SHARED_CONSTANTS__, {
+    label: '__TEST_LOAD_SHARED_CONSTANTS__',
+  });
 }
 
 afterEach(() => {
@@ -242,4 +259,98 @@ test('loadSharedConstantsFromSW times out when no response', async () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'TIMEOUT');
+});
+
+test('content bootstrap recovers after constants failure without changing document identity', async () => {
+  let constantsAvailable = false;
+  const listeners = new Set();
+
+  setupGlobals((message, callback) => {
+    if (message?.type === SHARED_CONSTANTS_REQUEST_TYPE) {
+      if (constantsAvailable) {
+        callback?.({ ok: true, constants: constantsPayload });
+        return;
+      }
+      global.chrome.runtime.lastError = { message: 'Receiving end does not exist.' };
+      callback?.(undefined);
+      delete global.chrome.runtime.lastError;
+      return;
+    }
+    callback?.({ tabId: 1 });
+  });
+  global.chrome.runtime.onMessage = {
+    addListener(listener) {
+      listeners.add(listener);
+    },
+    removeListener(listener) {
+      listeners.delete(listener);
+    },
+  };
+  global.chrome.storage.onChanged = {
+    addListener() {},
+    removeListener() {},
+  };
+
+  await import(`../../content/content-main.js?bootstrap-failed=${Date.now()}-${Math.random()}`);
+  await waitForTestHook(
+    () => global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__?.phase === 'RETRYABLE_FAILED',
+    { label: 'bootstrap RETRYABLE_FAILED after constants failure' },
+  );
+  const failedState = global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__;
+  assert.equal(failedState.phase, 'RETRYABLE_FAILED');
+  assert.equal(failedState.generation, 1);
+  assert.equal(failedState.lastFailure.reason, 'NO_RECEIVER');
+  assert.equal(failedState.lastFailure.attempts, 3);
+  const firstDocumentInstanceId = failedState.documentInstanceId;
+
+  constantsAvailable = true;
+  await import(`../../content/content-main.js?bootstrap-retry=${Date.now()}-${Math.random()}`);
+  await waitForTestHook(
+    () => global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__?.phase === 'READY',
+    { label: 'bootstrap READY after retry' },
+  );
+
+  const readyState = global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__;
+  assert.equal(readyState.generation, 2);
+  assert.equal(readyState.documentInstanceId, firstDocumentInstanceId);
+  assert.equal(global.window.__AURA_DOCUMENT_INSTANCE_ID__, firstDocumentInstanceId);
+  assert.equal(listeners.size, 2, 'one early listener and one main listener should remain');
+});
+
+test('entrypoint retry restores a missing router before content-main claims readiness', async () => {
+  const listeners = new Set();
+  setupGlobals((message, callback) => {
+    if (message?.type === SHARED_CONSTANTS_REQUEST_TYPE) {
+      callback?.({ ok: true, constants: constantsPayload });
+      return;
+    }
+    callback?.({ tabId: 1 });
+  });
+  global.chrome.runtime.onMessage = {
+    addListener(listener) { listeners.add(listener); },
+    removeListener(listener) { listeners.delete(listener); },
+  };
+  global.chrome.storage.onChanged = { addListener() {}, removeListener() {} };
+  delete globalThis.AURA_CONTENT_MESSAGE_ROUTER_V1;
+
+  await import(`../../content/content-main.js?router-missing=${Date.now()}-${Math.random()}`);
+  const failedState = global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__;
+  assert.equal(failedState.phase, 'RETRYABLE_FAILED');
+  assert.equal(failedState.lastFailure.reason, 'CONTENT_MESSAGE_ROUTER_UNAVAILABLE');
+  assert.equal(failedState.generation, 1);
+  const documentInstanceId = failedState.documentInstanceId;
+  assert.equal(listeners.size, 1, 'the failed attempt leaves only the early listener');
+
+  await import(`../../content/content-message-router.runtime.js?entrypoint-retry=${Date.now()}-${Math.random()}`);
+  await import(`../../content/content-main.js?router-recovered=${Date.now()}-${Math.random()}`);
+  await waitForTestHook(
+    () => global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__?.phase === 'READY',
+    { label: 'bootstrap READY after router entrypoint retry' },
+  );
+
+  const readyState = global.window.__AURA_CONTENT_BOOTSTRAP_STATE_V1__;
+  assert.equal(readyState.generation, 2);
+  assert.equal(readyState.documentInstanceId, documentInstanceId);
+  assert.equal(typeof global.window.__AURA_CONTENT_MAIN_MESSAGE_LISTENER__, 'function');
+  assert.equal(listeners.size, 2, 'one early listener and one router-created main listener remain');
 });

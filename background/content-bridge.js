@@ -2,13 +2,19 @@ import { ACTIONS } from '../shared/constants.js';
 import { createError, isValidTabId } from '../shared/utils.js';
 import { isUnsupportedScheme } from './site-policy-manager.js';
 
-const DEFAULT_INJECT_FILES = [
-  'content/reading-ruler.runtime.js',
+export const DEFAULT_INJECT_FILES = [
+  'content/top-layer-host.runtime.js',
+  'content/rect-animator.runtime.js',
+  'content/focus-engine-controller.runtime.js',
   'content/focus-overlay-v2.runtime.js',
   'content/ultra-focus.runtime.js',
-  'content/spa-hooks-v2.runtime.js',
+  'content/reading-ruler.runtime.js',
   'content/smartscope-v2.runtime.js',
   'content/mode-engine-scoped-v2.runtime.js',
+  'content/dark-comfort-theme.runtime.js',
+  'content/page-signals-adapter.runtime.js',
+  'content/content-bootstrap.runtime.js',
+  'content/content-message-router.runtime.js',
   'content/content-main.js',
 ];
 
@@ -19,7 +25,14 @@ const DEFAULTS = {
   receiverBaseDelayMs: 250,
   pingAction: ACTIONS.TEST_PING_CONTENT,
   injectFiles: DEFAULT_INJECT_FILES,
+  entrypointFiles: [
+    'content/content-message-router.runtime.js',
+    'content/content-main.js',
+  ],
 };
+
+const RETRYABLE_BOOTSTRAP_PHASE = 'RETRYABLE_FAILED';
+const TERMINAL_BOOTSTRAP_PHASE = 'INVALIDATED';
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,6 +48,9 @@ export class ContentBridge {
       typeof opts.receiverBaseDelayMs === 'number' ? opts.receiverBaseDelayMs : DEFAULTS.receiverBaseDelayMs;
     this.pingAction = typeof opts.pingAction === 'string' ? opts.pingAction : DEFAULTS.pingAction;
     this.injectFiles = Array.isArray(opts.injectFiles) && opts.injectFiles.length > 0 ? opts.injectFiles : DEFAULTS.injectFiles;
+    this.entrypointFiles = Array.isArray(opts.entrypointFiles) && opts.entrypointFiles.length > 0
+      ? opts.entrypointFiles
+      : DEFAULTS.entrypointFiles;
     this.debug = opts.debug === true;
   }
 
@@ -77,6 +93,11 @@ export class ContentBridge {
         resolve(response);
       };
 
+      if (typeof opts.documentId === 'string' && opts.documentId) {
+        chrome.tabs.sendMessage(tabId, message, { documentId: opts.documentId }, callback);
+        return;
+      }
+
       if (typeof opts.frameId === 'number') {
         chrome.tabs.sendMessage(tabId, message, { frameId: opts.frameId }, callback);
         return;
@@ -86,13 +107,15 @@ export class ContentBridge {
     });
   }
 
-  async _inject(tabId, opts = {}) {
+  async _inject(tabId, opts = {}, files = this.injectFiles) {
     const target = { tabId };
-    if (typeof opts.frameId === 'number') {
+    if (typeof opts.documentId === 'string' && opts.documentId) {
+      target.documentIds = [opts.documentId];
+    } else if (typeof opts.frameId === 'number') {
       target.frameIds = [opts.frameId];
     }
 
-    await chrome.scripting.executeScript({ target, files: this.injectFiles });
+    await chrome.scripting.executeScript({ target, files });
   }
 
   async ensureReceiver(tabId, opts = {}) {
@@ -108,23 +131,59 @@ export class ContentBridge {
       };
     }
 
-    let injectionAttempted = false;
+    let fullInjectionAttempted = false;
+    let entrypointInjectionAttempted = false;
     let lastErrorMessage = '';
 
     for (let attempt = 1; attempt <= this.receiverMaxAttempts; attempt += 1) {
       try {
         const pingResponse = await this._sendMessage(tabId, { action: this.pingAction }, opts);
         if (pingResponse?.ok === true) {
-          return { ok: true, attempts: attempt, injected: injectionAttempted, lastErrorMessage };
+          return {
+            ok: true,
+            attempts: attempt,
+            injected: fullInjectionAttempted || entrypointInjectionAttempted,
+            lastErrorMessage,
+          };
+        }
+        if (pingResponse?.phase === TERMINAL_BOOTSTRAP_PHASE) {
+          return {
+            ok: false,
+            error: createError('E001', 'Content bootstrap invalidated'),
+            code: 'E001',
+            attempts: attempt,
+            injected: fullInjectionAttempted || entrypointInjectionAttempted,
+            lastErrorMessage: pingResponse?.reason || TERMINAL_BOOTSTRAP_PHASE,
+          };
+        }
+        if (
+          pingResponse?.phase === RETRYABLE_BOOTSTRAP_PHASE
+          && pingResponse?.retryable === true
+          && !entrypointInjectionAttempted
+        ) {
+          try {
+            await this._inject(tabId, opts, this.entrypointFiles);
+            entrypointInjectionAttempted = true;
+            this._logDebug('Content entrypoint reinjected after retryable bootstrap failure', attempt);
+          } catch (injectError) {
+            return {
+              ok: false,
+              error: createError('E001', 'Content entrypoint reinjection failed'),
+              code: 'E001',
+              attempts: attempt,
+              injected: fullInjectionAttempted || entrypointInjectionAttempted,
+              lastErrorMessage: injectError?.message || pingResponse?.reason || '',
+            };
+          }
         }
       } catch (error) {
         const errorMessage = error?.message || '';
         lastErrorMessage = errorMessage;
         if (this._isReceivingEndMissing(errorMessage)) {
-          if (!injectionAttempted) {
+          if (!fullInjectionAttempted) {
             try {
               await this._inject(tabId, opts);
-              injectionAttempted = true;
+              fullInjectionAttempted = true;
               this._logDebug('Content script injected on attempt', attempt);
             } catch (injectError) {
               const code = injectError?.message?.includes('No tab with id') ? 'E004' : 'E001';
@@ -133,7 +192,7 @@ export class ContentBridge {
                 error: createError(code, 'Content script injection failed'),
                 code,
                 attempts: attempt,
-                injected: injectionAttempted,
+                injected: fullInjectionAttempted || entrypointInjectionAttempted,
                 lastErrorMessage: injectError?.message || errorMessage,
               };
             }
@@ -143,7 +202,7 @@ export class ContentBridge {
             ok: false,
             error: createError('E001', errorMessage || 'Ping failed'),
             attempts: attempt,
-            injected: injectionAttempted,
+            injected: fullInjectionAttempted || entrypointInjectionAttempted,
             lastErrorMessage: errorMessage,
           };
         }
@@ -156,7 +215,7 @@ export class ContentBridge {
       console.warn('[SW][ContentBridge] Content receiver not ready', {
         tabId,
         attempts: this.receiverMaxAttempts,
-        injected: injectionAttempted,
+        injected: fullInjectionAttempted || entrypointInjectionAttempted,
         lastErrorMessage,
       });
     }
@@ -165,7 +224,7 @@ export class ContentBridge {
       ok: false,
       error: createError('E001', 'Content script not ready'),
       attempts: this.receiverMaxAttempts,
-      injected: injectionAttempted,
+      injected: fullInjectionAttempted || entrypointInjectionAttempted,
       lastErrorMessage,
     };
   }

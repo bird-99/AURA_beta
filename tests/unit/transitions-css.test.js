@@ -106,3 +106,36 @@ test('ensureTransitionsCss injects raw transition sheet and removeTransitionsCss
   assert.equal(calls.remove[0].css, calls.insert[0].css);
   assert.equal(registry.entries.has(result.cssId), false);
 });
+
+test('ensureTransitionsCss skips reinsertion when transition hash is already active', async () => {
+  const calls = createChromeScriptingSpies();
+  const registry = createRegistry();
+  const stateManager = createStateManager({
+    1: {
+      [MODE_IDS.COMFORT_VISUAL]: { scopedV2: {} },
+    },
+  });
+  const applier = new CssApplier(registry, stateManager, null);
+
+  const first = await applier.ensureTransitionsCss(1, MODE_IDS.COMFORT_VISUAL, {
+    transitionMs: 160,
+  });
+  stateManager.state[1][MODE_IDS.COMFORT_VISUAL] = {
+    scopedV2: {
+      transitionCssId: first.cssId,
+      transitionCssHash: first.cssHash,
+    },
+  };
+
+  const second = await applier.ensureTransitionsCss(1, MODE_IDS.COMFORT_VISUAL, {
+    transitionMs: 160,
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(first.applied, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.applied, false);
+  assert.equal(second.cssId, first.cssId);
+  assert.equal(second.cssHash, first.cssHash);
+  assert.equal(calls.insert.length, 1);
+});

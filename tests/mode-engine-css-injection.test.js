@@ -89,6 +89,59 @@ test('guardrails off injects raw css', async () => {
   assert.equal(result.injected, true);
 });
 
+test('allFrames target wins over frame-specific targeting', async () => {
+  const insertCssMock = setupChromeMock();
+  __applyFlagOverridesForTests({ modeEngineCssGuardrails: false });
+
+  const result = await insertModeCssSafely({
+    tabId: 9,
+    frameId: 3,
+    allFrames: true,
+    cssText: 'body { color: white; }',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(insertCssMock.mock.callCount(), 1);
+  const [call] = insertCssMock.mock.calls[0].arguments;
+  assert.deepEqual(call.target, { tabId: 9, allFrames: true });
+});
+
+test('allFrames can explicitly include a separate top-frame injection', async () => {
+  const insertCssMock = setupChromeMock();
+  __applyFlagOverridesForTests({ modeEngineCssGuardrails: false });
+
+  const result = await insertModeCssSafely({
+    tabId: 10,
+    allFrames: true,
+    includeTopFrame: true,
+    cssText: 'body { background-color: black; }',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(insertCssMock.mock.callCount(), 2);
+  assert.deepEqual(insertCssMock.mock.calls[0].arguments[0].target, { tabId: 10 });
+  assert.deepEqual(insertCssMock.mock.calls[1].arguments[0].target, { tabId: 10, allFrames: true });
+});
+
+test('documentIds target one verified document without an allFrames mutation', async () => {
+  const insertCssMock = setupChromeMock();
+  __applyFlagOverridesForTests({ modeEngineCssGuardrails: false });
+
+  const result = await insertModeCssSafely({
+    tabId: 11,
+    frameId: 3,
+    documentIds: ['chrome-document-exact'],
+    cssText: 'body { color: white; }',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(insertCssMock.mock.callCount(), 1);
+  assert.deepEqual(insertCssMock.mock.calls[0].arguments[0].target, {
+    tabId: 11,
+    documentIds: ['chrome-document-exact'],
+  });
+});
+
 test('injection errors return ok=false without throwing', async () => {
   const insertCssMock = setupChromeMock(async () => {
     throw new Error('boom');

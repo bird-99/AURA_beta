@@ -14,11 +14,25 @@
     </style>
   </head>
   <body>
-    <main>
+    <main data-nav-fixture="a">
       <h1>Navigation Fixture A</h1>
       <p>Fixture A content for navigation persistence.</p>
-      <article>
-        <p>Scoped mode should survive navigation.</p>
+      <p data-nav-marker="a">AURA_NAV_MARKER_A_BEFORE_NAVIGATION</p>
+      <p>
+        This first navigation fixture contains a realistic block of article text so SmartScope can select a stable
+        content root before navigation. The mode should apply to this readable region, record scoped CSS, and keep the
+        active state available for rehydration when the tab moves to another page on the same origin.
+      </p>
+      <p>
+        The additional prose is deliberate test data. It gives the scoped mode engine enough text length and paragraph
+        density to avoid falling back to no scope, while keeping the page small and deterministic for local Playwright
+        runs.
+      </p>
+      <article data-nav-article="a">
+        <p>
+          Scoped mode should survive navigation and reapply to the next document without leaving stale tokens on the
+          old page or broad global styles on the new one.
+        </p>
       </article>
       <a href="/nav/b.html">Go to B</a>
     </main>

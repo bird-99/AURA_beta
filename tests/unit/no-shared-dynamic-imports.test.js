@@ -5,6 +5,8 @@ import path from 'node:path';
 
 const filesToScan = [
   'background/css-applier.js',
+  'content/content-bootstrap.runtime.js',
+  'content/content-message-router.runtime.js',
   'content/spa-hooks-v2.runtime.js',
   'content/content-main.js',
 ].map((file) => path.join(process.cwd(), file));

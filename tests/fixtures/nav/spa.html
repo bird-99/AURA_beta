@@ -19,11 +19,27 @@
     </style>
   </head>
   <body>
-    <main>
+    <main data-spa-fixture="root">
       <h1>SPA Fixture</h1>
       <p>Testing pushState updates without full reload.</p>
+      <p>
+        This single-page fixture provides enough stable reading content for SmartScope before and after client-side
+        navigation. The mode engine should keep a scoped mode active across history updates while still verifying that
+        the target content root is safe and meaningful.
+      </p>
+      <p>
+        Local deterministic content keeps the test hermetic and avoids depending on third-party pages. The paragraphs
+        are intentionally long enough to exercise scoring, reapply, and cleanup behavior without introducing unrelated
+        layout complexity.
+      </p>
       <button type="button" id="spa-navigate">Navigate in SPA</button>
-      <div id="spa-content">SPA page 1</div>
+      <div id="spa-content" data-spa-page="1">
+        <p data-spa-marker="1">
+          AURA_SPA_MARKER_PAGE_1.
+          SPA page 1 includes readable text inside the dynamic region so scoped mode can continue to target article-like
+          content after the page mutates.
+        </p>
+      </div>
     </main>
     <script>
       const content = document.getElementById('spa-content');
@@ -31,7 +47,14 @@
       let pageIndex = 1;
 
       function render() {
-        content.textContent = `SPA page ${pageIndex}`;
+        content.dataset.spaPage = String(pageIndex);
+        content.innerHTML = `
+          <p data-spa-marker="${pageIndex}">
+            AURA_SPA_MARKER_PAGE_${pageIndex}.
+            SPA page ${pageIndex} includes updated readable text inside the dynamic region so scoped mode can continue
+            to target article-like content after the page mutates.
+          </p>
+        `;
       }
 
       function triggerSpaNavigation() {

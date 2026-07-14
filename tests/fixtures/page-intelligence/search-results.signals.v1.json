@@ -1,0 +1,130 @@
+{
+  "name": "search-results",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_search_results_v1",
+    "routeEpoch": "aura_pse_route_search_results_v1",
+    "viewport": {
+      "w": 1366,
+      "h": 768
+    },
+    "pageHints": {
+      "urlKind": "SEARCH",
+      "semanticArticleCount": 0,
+      "formCount": 1,
+      "tableCount": 0,
+      "mediaCount": 1,
+      "fixedOrStickyCount": 1,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.46,
+      "linkDensity": 0.58,
+      "interactiveDensity": 0.38,
+      "mediaDensity": 0.08,
+      "formDensity": 0.08,
+      "tableDensity": 0.02,
+      "viewportCoverage": 0.84
+    },
+    "blocks": [
+      {
+        "blockId": "b_search_results",
+        "roleHint": "CARD",
+        "rectRatio": {
+          "xRatio": 0.18,
+          "yRatio": 0.14,
+          "widthRatio": 0.64,
+          "heightRatio": 0.68,
+          "visibleRatio": 0.95
+        },
+        "metrics": {
+          "textDensity": 0.5,
+          "linkDensity": 0.62,
+          "interactiveDensity": 0.34,
+          "mediaDensity": 0.08,
+          "formDensity": 0.04,
+          "tableDensity": 0,
+          "viewportCoverage": 0.62
+        },
+        "flags": []
+      }
+    ],
+    "stats": {
+      "elapsedMs": 7,
+      "nodesScanned": 540,
+      "candidatesSeen": 12,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 12,
+        "nodesSampled": 540,
+        "elapsedMs": 7,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_search_results",
+          "rectBuckets": {
+            "x": 2,
+            "y": 1,
+            "w": 6,
+            "h": 7
+          },
+          "visibleAreaBucket": 4,
+          "viewportIntersectionBucket": 10,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": true,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 0,
+          "linkDensityBucket": 6,
+          "mediaControlSeparationHint": false,
+          "headingHint": false,
+          "listHint": true,
+          "cardHint": true,
+          "centralityBucket": 10
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "SEARCH",
+    "minConfidence": 0.8,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_search_results",
+    "allowedActions": [
+      "FOCUS_VISIBILITY",
+      "TARGET_SIZE"
+    ],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "REDUCE_MOTION"
+    ],
+    "requiredReasons": [
+      "SEARCH_RESULTS_STRUCTURE_DETECTED"
+    ],
+    "forbiddenReasons": [
+      "UNKNOWN_LOW_CONFIDENCE"
+    ],
+    "requiredProblems": [],
+    "riskBands": {
+      "layoutRisk": "MEDIUM",
+      "interactionRisk": "MEDIUM"
+    }
+  }
+}

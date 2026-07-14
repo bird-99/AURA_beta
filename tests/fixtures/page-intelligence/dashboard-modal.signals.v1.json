@@ -1,0 +1,57 @@
+{
+  "name": "dashboard-modal",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_dashboard_modal_v1",
+    "routeEpoch": "aura_pse_route_dashboard_modal_v1",
+    "viewport": { "w": 1440, "h": 860 },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 0,
+      "formCount": 1,
+      "tableCount": 4,
+      "mediaCount": 1,
+      "fixedOrStickyCount": 4,
+      "modalLikeCount": 1
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.42,
+      "linkDensity": 0.16,
+      "interactiveDensity": 0.52,
+      "mediaDensity": 0.1,
+      "formDensity": 0.18,
+      "tableDensity": 0.66,
+      "viewportCoverage": 0.95
+    },
+    "blocks": [
+      {
+        "blockId": "b_dashboard_modal_table",
+        "roleHint": "TABLE",
+        "rectRatio": { "xRatio": 0.18, "yRatio": 0.18, "widthRatio": 0.72, "heightRatio": 0.6, "visibleRatio": 0.86 },
+        "metrics": {
+          "textDensity": 0.46,
+          "linkDensity": 0.12,
+          "interactiveDensity": 0.56,
+          "mediaDensity": 0.04,
+          "formDensity": 0.12,
+          "tableDensity": 0.82,
+          "viewportCoverage": 0.58
+        },
+        "flags": ["DASHBOARD_TABLE_DENSITY_HIGH"]
+      }
+    ],
+    "stats": { "elapsedMs": 11, "nodesScanned": 960, "candidatesSeen": 21, "budgetHit": false }
+  },
+  "expected": {
+    "pageType": "DASHBOARD",
+    "minConfidence": 0.75,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_dashboard_modal_table",
+    "allowedActions": [],
+    "deniedActions": ["READING_COMFORT_TYPOGRAPHY", "FOCUS_VISIBILITY", "REDUCE_MOTION", "TARGET_SIZE"],
+    "requiredReasons": ["DASHBOARD_TABLE_DENSITY_HIGH"],
+    "requiredProblems": ["HIGH_LAYOUT_RISK", "HIGH_INTERACTION_RISK", "MODAL_OVERLAY_PRESENT"],
+    "riskBands": { "layoutRisk": "HIGH", "interactionRisk": "HIGH" }
+  }
+}

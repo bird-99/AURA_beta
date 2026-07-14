@@ -1,0 +1,132 @@
+{
+  "name": "dashboard",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_dashboard_v1",
+    "routeEpoch": "aura_pse_route_dashboard_v1",
+    "viewport": {
+      "w": 1440,
+      "h": 860
+    },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 0,
+      "formCount": 1,
+      "tableCount": 4,
+      "mediaCount": 1,
+      "fixedOrStickyCount": 4,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.42,
+      "linkDensity": 0.16,
+      "interactiveDensity": 0.52,
+      "mediaDensity": 0.1,
+      "formDensity": 0.18,
+      "tableDensity": 0.66,
+      "viewportCoverage": 0.95
+    },
+    "blocks": [
+      {
+        "blockId": "b_dashboard_table",
+        "roleHint": "TABLE",
+        "rectRatio": {
+          "xRatio": 0.18,
+          "yRatio": 0.18,
+          "widthRatio": 0.72,
+          "heightRatio": 0.6,
+          "visibleRatio": 0.86
+        },
+        "metrics": {
+          "textDensity": 0.46,
+          "linkDensity": 0.12,
+          "interactiveDensity": 0.56,
+          "mediaDensity": 0.04,
+          "formDensity": 0.12,
+          "tableDensity": 0.82,
+          "viewportCoverage": 0.58
+        },
+        "flags": [
+          "DASHBOARD_TABLE_DENSITY_HIGH"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 10,
+      "nodesScanned": 920,
+      "candidatesSeen": 20,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 20,
+        "nodesSampled": 920,
+        "elapsedMs": 10,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_dashboard_table",
+          "rectBuckets": {
+            "x": 2,
+            "y": 2,
+            "w": 7,
+            "h": 6
+          },
+          "visibleAreaBucket": 4,
+          "viewportIntersectionBucket": 9,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": false,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 1,
+          "linkDensityBucket": 1,
+          "mediaControlSeparationHint": false,
+          "headingHint": false,
+          "listHint": true,
+          "cardHint": false,
+          "centralityBucket": 9
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "DASHBOARD",
+    "minConfidence": 0.75,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_dashboard_table",
+    "allowedActions": [
+      "FOCUS_VISIBILITY",
+      "REDUCE_MOTION"
+    ],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "DASHBOARD_TABLE_DENSITY_HIGH"
+    ],
+    "requiredProblems": [
+      "HIGH_LAYOUT_RISK",
+      "HIGH_INTERACTION_RISK"
+    ],
+    "riskBands": {
+      "layoutRisk": "HIGH",
+      "interactionRisk": "HIGH"
+    }
+  }
+}

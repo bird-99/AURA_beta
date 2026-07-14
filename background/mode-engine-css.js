@@ -56,12 +56,34 @@ function emitGuardrailsDiagnostics({ guardResult, origin, modeId, cssTextLength,
   }
 }
 
-function buildTarget({ tabId, frameId, frameIds }) {
+function buildTarget({ tabId, frameId, frameIds, documentIds, allFrames = false }) {
   const target = { tabId };
-  if (Array.isArray(frameIds) && frameIds.length > 0) {
+  if (allFrames === true) {
+    target.allFrames = true;
+  } else if (Array.isArray(documentIds) && documentIds.length > 0) {
+    target.documentIds = documentIds;
+  } else if (Array.isArray(frameIds) && frameIds.length > 0) {
     target.frameIds = frameIds;
   } else if (typeof frameId === 'number') {
     target.frameIds = [frameId];
+  }
+  return target;
+}
+
+async function applyCssToTargets({ tabId, frameId, frameIds, documentIds, allFrames, includeTopFrame, cssText, origin }) {
+  const target = buildTarget({ tabId, frameId, frameIds, documentIds, allFrames });
+  if (allFrames === true && includeTopFrame === true) {
+    await chrome.scripting.insertCSS({ target: { tabId }, css: cssText, origin });
+  }
+  await chrome.scripting.insertCSS({ target, css: cssText, origin });
+  return target;
+}
+
+async function removeCssFromTargets({ tabId, frameId, frameIds, documentIds, allFrames, includeTopFrame, cssText, origin }) {
+  const target = buildTarget({ tabId, frameId, frameIds, documentIds, allFrames });
+  await chrome.scripting.removeCSS({ target, css: cssText, origin });
+  if (allFrames === true && includeTopFrame === true) {
+    await chrome.scripting.removeCSS({ target: { tabId }, css: cssText, origin });
   }
   return target;
 }
@@ -70,6 +92,9 @@ export async function insertModeCssSafely({
   tabId,
   frameId,
   frameIds,
+  documentIds,
+  allFrames,
+  includeTopFrame = false,
   cssText,
   origin,
   modeId,
@@ -79,7 +104,6 @@ export async function insertModeCssSafely({
 }) {
   const guardrailsEnabled = forceGuard || isFlagEnabled('modeEngineCssGuardrails');
   const debugEnabled = isFlagEnabled('debugModeEngine');
-  const target = buildTarget({ tabId, frameId, frameIds });
   let guardResult = null;
   let finalCssText = cssText || '';
 
@@ -117,7 +141,16 @@ export async function insertModeCssSafely({
   }
 
   try {
-    await chrome.scripting.insertCSS({ target, css: finalCssText, origin });
+    await applyCssToTargets({
+      tabId,
+      frameId,
+      frameIds,
+      documentIds,
+      allFrames,
+      includeTopFrame,
+      cssText: finalCssText,
+      origin,
+    });
     return { ok: true, injected: true, guarded: guardrailsEnabled, cssText: finalCssText, guardResult };
   } catch (error) {
     if (debugEnabled) {
@@ -138,12 +171,14 @@ export async function insertModeCssRaw({
   tabId,
   frameId,
   frameIds,
+  documentIds,
+  allFrames,
+  includeTopFrame = false,
   cssText,
   origin,
   modeId,
 }) {
   const debugEnabled = isFlagEnabled('debugModeEngine');
-  const target = buildTarget({ tabId, frameId, frameIds });
   const finalCssText = cssText || '';
 
   if (!finalCssText.trim()) {
@@ -155,7 +190,16 @@ export async function insertModeCssRaw({
   }
 
   try {
-    await chrome.scripting.insertCSS({ target, css: finalCssText, origin });
+    await applyCssToTargets({
+      tabId,
+      frameId,
+      frameIds,
+      documentIds,
+      allFrames,
+      includeTopFrame,
+      cssText: finalCssText,
+      origin,
+    });
     return { ok: true, injected: true, cssText: finalCssText };
   } catch (error) {
     if (debugEnabled) {
@@ -174,11 +218,13 @@ export async function removeModeCssRaw({
   tabId,
   frameId,
   frameIds,
+  documentIds,
+  allFrames,
+  includeTopFrame = false,
   cssText,
   origin,
 }) {
   const debugEnabled = isFlagEnabled('debugModeEngine');
-  const target = buildTarget({ tabId, frameId, frameIds });
   const finalCssText = cssText || '';
 
   if (!finalCssText.trim()) {
@@ -190,7 +236,16 @@ export async function removeModeCssRaw({
   }
 
   try {
-    await chrome.scripting.removeCSS({ target, css: finalCssText, origin });
+    await removeCssFromTargets({
+      tabId,
+      frameId,
+      frameIds,
+      documentIds,
+      allFrames,
+      includeTopFrame,
+      cssText: finalCssText,
+      origin,
+    });
     return { ok: true, removed: true };
   } catch (error) {
     if (debugEnabled) {

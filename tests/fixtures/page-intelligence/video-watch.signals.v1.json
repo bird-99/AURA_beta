@@ -1,0 +1,134 @@
+{
+  "name": "video-watch",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_video_watch_v1",
+    "routeEpoch": "aura_pse_route_video_watch_v1",
+    "viewport": {
+      "w": 1440,
+      "h": 900
+    },
+    "pageHints": {
+      "urlKind": "VIDEO",
+      "semanticArticleCount": 0,
+      "formCount": 0,
+      "tableCount": 0,
+      "mediaCount": 3,
+      "fixedOrStickyCount": 3,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.22,
+      "linkDensity": 0.18,
+      "interactiveDensity": 0.38,
+      "mediaDensity": 0.72,
+      "formDensity": 0,
+      "tableDensity": 0,
+      "viewportCoverage": 0.86
+    },
+    "blocks": [
+      {
+        "blockId": "b_video_player",
+        "roleHint": "PLAYER",
+        "rectRatio": {
+          "xRatio": 0.05,
+          "yRatio": 0.06,
+          "widthRatio": 0.68,
+          "heightRatio": 0.58,
+          "visibleRatio": 0.96
+        },
+        "metrics": {
+          "textDensity": 0.08,
+          "linkDensity": 0.04,
+          "interactiveDensity": 0.42,
+          "mediaDensity": 0.92,
+          "formDensity": 0,
+          "tableDensity": 0,
+          "viewportCoverage": 0.56
+        },
+        "flags": [
+          "VIDEO_MEDIA_DENSITY_HIGH",
+          "VIDEO_PAGE_TYPOGRAPHY_BLOCKED"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 8,
+      "nodesScanned": 690,
+      "candidatesSeen": 14,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 14,
+        "nodesSampled": 690,
+        "elapsedMs": 8,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_video_player",
+          "rectBuckets": {
+            "x": 1,
+            "y": 1,
+            "w": 7,
+            "h": 6
+          },
+          "visibleAreaBucket": 4,
+          "viewportIntersectionBucket": 10,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": false,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 0,
+          "linkDensityBucket": 0,
+          "mediaControlSeparationHint": true,
+          "headingHint": false,
+          "listHint": false,
+          "cardHint": false,
+          "centralityBucket": 7
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "VIDEO",
+    "minConfidence": 0.75,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_video_player",
+    "allowedActions": [
+      "FOCUS_VISIBILITY",
+      "REDUCE_MOTION"
+    ],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "VIDEO_MEDIA_DENSITY_HIGH",
+      "VIDEO_PAGE_TYPOGRAPHY_BLOCKED"
+    ],
+    "requiredProblems": [
+      "HIGH_LAYOUT_RISK",
+      "HIGH_INTERACTION_RISK"
+    ],
+    "riskBands": {
+      "layoutRisk": "HIGH",
+      "interactionRisk": "HIGH"
+    }
+  }
+}

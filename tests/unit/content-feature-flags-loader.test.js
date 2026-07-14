@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import '../../content/content-bootstrap.runtime.js';
+import '../../content/content-message-router.runtime.js';
 
 import {
   ACTIONS,
+  CONTENT_MESSAGE_ROUTES_V1,
+  CONTENT_ROUTE_OWNERSHIP,
   DECISIONS,
   MODE_ENGINE_FLAG_DEFAULTS,
   MODE_IDS,
@@ -21,6 +25,8 @@ const FEATURE_FLAGS_REQUEST_TYPE = 'AURA_GET_FEATURE_FLAGS_V1';
 
 const constantsPayload = {
   ACTIONS,
+  CONTENT_MESSAGE_ROUTES_V1,
+  CONTENT_ROUTE_OWNERSHIP,
   DECISIONS,
   MODE_ENGINE_FLAG_DEFAULTS,
   MODE_IDS,
@@ -166,13 +172,23 @@ function setupGlobals({ initialFlags = {} } = {}) {
   };
 }
 
+async function waitForTestHook(getter, { timeoutMs = 2000, stepMs = 5, label = 'test hook' } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const value = getter();
+    if (value) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+  throw new Error(`waitForTestHook timed out after ${timeoutMs}ms waiting for ${label}`);
+}
+
 async function loadContentMainWithTestHooks() {
   await import(`../../content/content-main.js?run=${Date.now()}`);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  const loader = global.window?.AURA?.__TEST_LOAD_FEATURE_FLAGS__;
-  assert.equal(typeof loader, 'function');
-  return loader;
+  return waitForTestHook(() => global.window?.AURA?.__TEST_LOAD_FEATURE_FLAGS__, {
+    label: '__TEST_LOAD_FEATURE_FLAGS__',
+  });
 }
 
 afterEach(() => {

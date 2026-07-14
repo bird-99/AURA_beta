@@ -1,0 +1,131 @@
+{
+  "name": "feed",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_feed_v1",
+    "routeEpoch": "aura_pse_route_feed_v1",
+    "viewport": {
+      "w": 1280,
+      "h": 800
+    },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 0,
+      "formCount": 0,
+      "tableCount": 0,
+      "mediaCount": 8,
+      "fixedOrStickyCount": 2,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.48,
+      "linkDensity": 0.28,
+      "interactiveDensity": 0.34,
+      "mediaDensity": 0.44,
+      "formDensity": 0,
+      "tableDensity": 0,
+      "viewportCoverage": 0.92
+    },
+    "blocks": [
+      {
+        "blockId": "b_feed_card_1",
+        "roleHint": "CARD",
+        "rectRatio": {
+          "xRatio": 0.25,
+          "yRatio": 0.12,
+          "widthRatio": 0.5,
+          "heightRatio": 0.24,
+          "visibleRatio": 0.94
+        },
+        "metrics": {
+          "textDensity": 0.52,
+          "linkDensity": 0.24,
+          "interactiveDensity": 0.3,
+          "mediaDensity": 0.38,
+          "formDensity": 0,
+          "tableDensity": 0,
+          "viewportCoverage": 0.22
+        },
+        "flags": [
+          "FEED_CARD_REPETITION_DETECTED"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 9,
+      "nodesScanned": 760,
+      "candidatesSeen": 18,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 18,
+        "nodesSampled": 760,
+        "elapsedMs": 9,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_feed_card_1",
+          "rectBuckets": {
+            "x": 3,
+            "y": 1,
+            "w": 5,
+            "h": 2
+          },
+          "visibleAreaBucket": 1,
+          "viewportIntersectionBucket": 9,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": true,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 0,
+          "linkDensityBucket": 2,
+          "mediaControlSeparationHint": false,
+          "headingHint": false,
+          "listHint": true,
+          "cardHint": true,
+          "centralityBucket": 7
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "FEED",
+    "minConfidence": 0.65,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_feed_card_1",
+    "allowedActions": [
+      "FOCUS_VISIBILITY",
+      "REDUCE_MOTION"
+    ],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "FEED_CARD_REPETITION_DETECTED"
+    ],
+    "requiredProblems": [
+      "HIGH_INTERACTION_RISK"
+    ],
+    "riskBands": {
+      "layoutRisk": "MEDIUM",
+      "interactionRisk": "HIGH"
+    }
+  }
+}

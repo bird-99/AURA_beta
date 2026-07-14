@@ -1,5 +1,15 @@
-import { MODE_IDS, MODE_PREFS_DEFAULTS, STATES, STORAGE_KEYS } from '../shared/constants.js';
-import { getFromLocal, getFromSession, setToLocal, setToSession, isValidTabId, isValidState } from '../shared/utils.js';
+import { ACTIVE_QUALITIES, MODE_IDS, MODE_PREFS_DEFAULTS, STATES, STORAGE_KEYS } from '../shared/constants.js';
+import {
+  getFromLocal,
+  getFromSession,
+  isValidTabId,
+  isValidState,
+  mutateLocalValue,
+  mutateSessionValue,
+  readSessionValueResult,
+  removeSessionValue,
+  setToSession,
+} from '../shared/utils.js';
 
 function getDefaultState() {
   return {
@@ -9,8 +19,12 @@ function getDefaultState() {
     pendingDecision: false,
     lastScore: 0,
     activatedAt: null,
+    frameId: null,
+    activeQuality: null,
     smartScope: null,
     scopedV2: null,
+    lastLifecycleOpId: null,
+    lastLifecycleGeneration: 0,
   };
 }
 
@@ -37,6 +51,10 @@ export function normalizeModePrefs(rawModePrefs) {
       ...defaultPrefs,
       ...sanitized,
     };
+
+    if (modeId === MODE_IDS.FOCUS) {
+      normalized[modeId].focusNotObscured = true;
+    }
   }
 
   return normalized;
@@ -44,6 +62,10 @@ export function normalizeModePrefs(rawModePrefs) {
 
 function isValidModeId(modeId) {
   return typeof modeId === 'string' && Object.values(MODE_IDS).includes(modeId);
+}
+
+function isValidActiveQuality(value) {
+  return typeof value === 'string' && Object.values(ACTIVE_QUALITIES).includes(value);
 }
 
 export function pickAllowedTabStateFields(rawState) {
@@ -77,6 +99,14 @@ export function pickAllowedTabStateFields(rawState) {
     cleaned.activatedAt = rawState.activatedAt;
   }
 
+  if (rawState.frameId === null || (Number.isInteger(rawState.frameId) && rawState.frameId >= 0)) {
+    cleaned.frameId = rawState.frameId;
+  }
+
+  if (rawState.activeQuality === null || isValidActiveQuality(rawState.activeQuality)) {
+    cleaned.activeQuality = rawState.activeQuality;
+  }
+
   if (
     rawState.smartScope === null ||
     (rawState.smartScope && typeof rawState.smartScope === 'object' && !Array.isArray(rawState.smartScope))
@@ -89,6 +119,14 @@ export function pickAllowedTabStateFields(rawState) {
     (rawState.scopedV2 && typeof rawState.scopedV2 === 'object' && !Array.isArray(rawState.scopedV2))
   ) {
     cleaned.scopedV2 = rawState.scopedV2;
+  }
+
+  if (rawState.lastLifecycleOpId === null || typeof rawState.lastLifecycleOpId === 'string') {
+    cleaned.lastLifecycleOpId = rawState.lastLifecycleOpId;
+  }
+
+  if (Number.isInteger(rawState.lastLifecycleGeneration) && rawState.lastLifecycleGeneration >= 0) {
+    cleaned.lastLifecycleGeneration = rawState.lastLifecycleGeneration;
   }
 
   return cleaned;
@@ -106,8 +144,17 @@ export function normalizeTabState(rawState) {
     pendingDecision: typeof cleaned.pendingDecision === 'boolean' ? cleaned.pendingDecision : defaults.pendingDecision,
     lastScore: typeof cleaned.lastScore === 'number' ? cleaned.lastScore : defaults.lastScore,
     activatedAt: typeof cleaned.activatedAt === 'number' ? cleaned.activatedAt : defaults.activatedAt,
+    frameId: typeof cleaned.frameId === 'number' ? cleaned.frameId : defaults.frameId,
+    activeQuality:
+      cleaned.state === STATES.ACTIVE && isValidActiveQuality(cleaned.activeQuality)
+        ? cleaned.activeQuality
+        : defaults.activeQuality,
     smartScope: cleaned.smartScope ?? defaults.smartScope,
     scopedV2: cleaned.scopedV2 ?? defaults.scopedV2,
+    lastLifecycleOpId: cleaned.lastLifecycleOpId ?? defaults.lastLifecycleOpId,
+    lastLifecycleGeneration: Number.isInteger(cleaned.lastLifecycleGeneration)
+      ? cleaned.lastLifecycleGeneration
+      : defaults.lastLifecycleGeneration,
   };
 }
 
@@ -115,7 +162,7 @@ function getSmartScopeTokenKey(tabId, modeId) {
   return `smartscope_token_${tabId}_${modeId}`;
 }
 
-class StateManager {
+export class StateManager {
   async getState(tabId, modeId) {
     if (!isValidTabId(tabId)) {
       return getDefaultState();
@@ -147,28 +194,29 @@ class StateManager {
       return null;
     }
 
-    const prefs = (await getFromLocal(STORAGE_KEYS.USER_PREFS)) || {};
-    const normalized = normalizeModePrefs(prefs.modePrefs);
-    const current = normalized[modeId] || { ...MODE_PREFS_DEFAULTS[modeId] };
-    const nextModePrefs = { ...current };
+    let nextModePrefs = null;
+    await mutateLocalValue(STORAGE_KEYS.USER_PREFS, (storedPrefs) => {
+      const prefs = storedPrefs && typeof storedPrefs === 'object' && !Array.isArray(storedPrefs) ? storedPrefs : {};
+      const normalized = normalizeModePrefs(prefs.modePrefs);
+      const current = normalized[modeId] || { ...MODE_PREFS_DEFAULTS[modeId] };
+      nextModePrefs = { ...current };
 
-    if (updates && typeof updates === 'object' && !Array.isArray(updates)) {
-      for (const key of Object.keys(current)) {
-        if (typeof updates[key] === 'boolean') {
-          nextModePrefs[key] = updates[key];
+      if (updates && typeof updates === 'object' && !Array.isArray(updates)) {
+        for (const key of Object.keys(current)) {
+          if (typeof updates[key] === 'boolean') {
+            nextModePrefs[key] = updates[key];
+          }
         }
       }
-    }
 
-    const nextPrefs = {
-      ...prefs,
-      modePrefs: {
-        ...normalized,
-        [modeId]: nextModePrefs,
-      },
-    };
-
-    await setToLocal(STORAGE_KEYS.USER_PREFS, nextPrefs);
+      return {
+        ...prefs,
+        modePrefs: {
+          ...normalized,
+          [modeId]: nextModePrefs,
+        },
+      };
+    });
 
     return nextModePrefs;
   }
@@ -183,18 +231,15 @@ class StateManager {
       return;
     }
 
-    const tabState = (await getFromSession(STORAGE_KEYS.TAB_STATE)) || {};
-    const existingModeState = normalizeTabState(tabState?.[tabId]?.[modeId] || getDefaultState());
-
-    const updatedModeState = normalizeTabState({
-      ...existingModeState,
-      state,
+    await mutateSessionValue(STORAGE_KEYS.TAB_STATE, (storedTabState) => {
+      const tabState = storedTabState && typeof storedTabState === 'object' && !Array.isArray(storedTabState)
+        ? { ...storedTabState }
+        : {};
+      const existingModeState = normalizeTabState(tabState?.[tabId]?.[modeId] || getDefaultState());
+      const updatedModeState = normalizeTabState({ ...existingModeState, state });
+      tabState[tabId] = { ...(tabState[tabId] || {}), [modeId]: updatedModeState };
+      return tabState;
     });
-
-    tabState[tabId] = tabState[tabId] || {};
-    tabState[tabId][modeId] = updatedModeState;
-
-    await setToSession(STORAGE_KEYS.TAB_STATE, tabState);
   }
 
   async updateTabModeState(tabId, modeId, updates) {
@@ -207,33 +252,34 @@ class StateManager {
       return;
     }
 
-    const tabState = (await getFromSession(STORAGE_KEYS.TAB_STATE)) || {};
-    const existingModeState = normalizeTabState(tabState?.[tabId]?.[modeId] || getDefaultState());
-    const cleanedUpdates = pickAllowedTabStateFields(updates);
+    await mutateSessionValue(STORAGE_KEYS.TAB_STATE, (storedTabState) => {
+      const tabState = storedTabState && typeof storedTabState === 'object' && !Array.isArray(storedTabState)
+        ? { ...storedTabState }
+        : {};
+      const existingModeState = normalizeTabState(tabState?.[tabId]?.[modeId] || getDefaultState());
+      const cleanedUpdates = pickAllowedTabStateFields(updates);
 
-    if (Object.prototype.hasOwnProperty.call(cleanedUpdates, 'smartScope')) {
-      delete cleanedUpdates.smartScope;
-    }
-
-    let mergedSmartScope = existingModeState.smartScope;
-    if (updates && Object.prototype.hasOwnProperty.call(updates, 'smartScope')) {
-      if (updates.smartScope === null) {
-        mergedSmartScope = null;
-      } else if (updates.smartScope && typeof updates.smartScope === 'object' && !Array.isArray(updates.smartScope)) {
-        mergedSmartScope = { ...(existingModeState.smartScope || {}), ...(updates.smartScope || {}) };
+      if (Object.prototype.hasOwnProperty.call(cleanedUpdates, 'smartScope')) {
+        delete cleanedUpdates.smartScope;
       }
-    }
 
-    const updatedModeState = normalizeTabState({
-      ...existingModeState,
-      ...cleanedUpdates,
-      smartScope: mergedSmartScope,
+      let mergedSmartScope = existingModeState.smartScope;
+      if (updates && Object.prototype.hasOwnProperty.call(updates, 'smartScope')) {
+        if (updates.smartScope === null) {
+          mergedSmartScope = null;
+        } else if (updates.smartScope && typeof updates.smartScope === 'object' && !Array.isArray(updates.smartScope)) {
+          mergedSmartScope = { ...(existingModeState.smartScope || {}), ...(updates.smartScope || {}) };
+        }
+      }
+
+      const updatedModeState = normalizeTabState({
+        ...existingModeState,
+        ...cleanedUpdates,
+        smartScope: mergedSmartScope,
+      });
+      tabState[tabId] = { ...(tabState[tabId] || {}), [modeId]: updatedModeState };
+      return tabState;
     });
-
-    tabState[tabId] = tabState[tabId] || {};
-    tabState[tabId][modeId] = updatedModeState;
-
-    await setToSession(STORAGE_KEYS.TAB_STATE, tabState);
   }
 
   async clearTab(tabId) {
@@ -241,22 +287,31 @@ class StateManager {
       return;
     }
 
-    const tabState = (await getFromSession(STORAGE_KEYS.TAB_STATE)) || {};
-
-    if (tabState[tabId]) {
+    await mutateSessionValue(STORAGE_KEYS.TAB_STATE, (storedTabState) => {
+      const tabState = storedTabState && typeof storedTabState === 'object' && !Array.isArray(storedTabState)
+        ? { ...storedTabState }
+        : {};
       delete tabState[tabId];
-      await setToSession(STORAGE_KEYS.TAB_STATE, tabState);
-    }
+      return tabState;
+    });
 
-    const smartScopeStatus = (await getFromSession(STORAGE_KEYS.SMARTSCOPE_STATUS)) || {};
-    if (smartScopeStatus[tabId]) {
+    await mutateSessionValue(STORAGE_KEYS.SMARTSCOPE_STATUS, (storedStatus) => {
+      const smartScopeStatus = storedStatus && typeof storedStatus === 'object' && !Array.isArray(storedStatus)
+        ? { ...storedStatus }
+        : {};
       delete smartScopeStatus[tabId];
-      await setToSession(STORAGE_KEYS.SMARTSCOPE_STATUS, smartScopeStatus);
-    }
+      return smartScopeStatus;
+    });
   }
 
   async getAllPendingDecisions() {
-    const tabState = (await getFromSession(STORAGE_KEYS.TAB_STATE)) || {};
+    const read = await readSessionValueResult(STORAGE_KEYS.TAB_STATE);
+    if (!read.ok) {
+      throw new Error(read.error?.message || 'TAB_STATE_STORAGE_UNAVAILABLE');
+    }
+    const tabState = read.status === 'found' && read.value && typeof read.value === 'object'
+      ? read.value
+      : {};
     const pending = [];
 
     for (const [tabId, modes] of Object.entries(tabState)) {
@@ -284,7 +339,13 @@ class StateManager {
   }
 
   async getModeState(tabId, modeId) {
-    const tabState = (await getFromSession(STORAGE_KEYS.TAB_STATE)) || {};
+    const read = await readSessionValueResult(STORAGE_KEYS.TAB_STATE);
+    if (!read.ok) {
+      throw new Error(read.error?.message || 'TAB_STATE_STORAGE_UNAVAILABLE');
+    }
+    const tabState = read.status === 'found' && read.value && typeof read.value === 'object'
+      ? read.value
+      : {};
     const modeState = tabState?.[tabId]?.[modeId];
     return normalizeTabState(modeState ?? getDefaultState());
   }
@@ -311,25 +372,18 @@ class StateManager {
       return;
     }
 
-    const tabState = (await getFromSession(STORAGE_KEYS.TAB_STATE)) || {};
-    const existingModeState = normalizeTabState(tabState?.[tabId]?.[modeId] || getDefaultState());
-
-    const mergedSmartScope = smartScope
-      ? {
-          ...(existingModeState.smartScope || {}),
-          ...smartScope,
-        }
-      : null;
-
-    const updatedModeState = normalizeTabState({
-      ...existingModeState,
-      smartScope: mergedSmartScope,
+    await mutateSessionValue(STORAGE_KEYS.TAB_STATE, (storedTabState) => {
+      const tabState = storedTabState && typeof storedTabState === 'object' && !Array.isArray(storedTabState)
+        ? { ...storedTabState }
+        : {};
+      const existingModeState = normalizeTabState(tabState?.[tabId]?.[modeId] || getDefaultState());
+      const mergedSmartScope = smartScope
+        ? { ...(existingModeState.smartScope || {}), ...smartScope }
+        : null;
+      const updatedModeState = normalizeTabState({ ...existingModeState, smartScope: mergedSmartScope });
+      tabState[tabId] = { ...(tabState[tabId] || {}), [modeId]: updatedModeState };
+      return tabState;
     });
-
-    tabState[tabId] = tabState[tabId] || {};
-    tabState[tabId][modeId] = updatedModeState;
-
-    await setToSession(STORAGE_KEYS.TAB_STATE, tabState);
   }
 
   async setSmartScopeToken(tabId, modeId, tokenEntry) {
@@ -340,7 +394,7 @@ class StateManager {
     const tokenKey = getSmartScopeTokenKey(tabId, modeId);
 
     try {
-      await chrome.storage.session.set({ [tokenKey]: tokenEntry });
+      await setToSession(tokenKey, tokenEntry);
     } catch (error) {
       console.error('[StateManager] Failed to set SmartScope token:', error);
     }
@@ -367,11 +421,13 @@ class StateManager {
       return;
     }
 
-    const existing = (await getFromSession(STORAGE_KEYS.SMARTSCOPE_STATUS)) || {};
-    const perTab = existing[tabId] || {};
-    perTab[modeId] = status;
-    existing[tabId] = perTab;
-    await setToSession(STORAGE_KEYS.SMARTSCOPE_STATUS, existing);
+    await mutateSessionValue(STORAGE_KEYS.SMARTSCOPE_STATUS, (storedStatus) => {
+      const existing = storedStatus && typeof storedStatus === 'object' && !Array.isArray(storedStatus)
+        ? { ...storedStatus }
+        : {};
+      existing[tabId] = { ...(existing[tabId] || {}), [modeId]: status };
+      return existing;
+    });
   }
 
   async getSmartScopeStatus(tabId, modeId) {
@@ -391,7 +447,7 @@ class StateManager {
     const tokenKey = getSmartScopeTokenKey(tabId, modeId);
 
     try {
-      await chrome.storage.session.remove(tokenKey);
+      await removeSessionValue(tokenKey);
     } catch (error) {
       console.error('[StateManager] Failed to remove SmartScope token:', error);
     }

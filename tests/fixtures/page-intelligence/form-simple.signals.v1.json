@@ -1,0 +1,134 @@
+{
+  "name": "form-simple",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_form_simple_v1",
+    "routeEpoch": "aura_pse_route_form_simple_v1",
+    "viewport": {
+      "w": 1180,
+      "h": 760
+    },
+    "pageHints": {
+      "urlKind": "UNKNOWN",
+      "semanticArticleCount": 0,
+      "formCount": 1,
+      "tableCount": 0,
+      "mediaCount": 0,
+      "fixedOrStickyCount": 0,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.34,
+      "linkDensity": 0.04,
+      "interactiveDensity": 0.22,
+      "mediaDensity": 0,
+      "formDensity": 0.55,
+      "tableDensity": 0,
+      "viewportCoverage": 0.6
+    },
+    "blocks": [
+      {
+        "blockId": "b_form_simple",
+        "roleHint": "FORM",
+        "rectRatio": {
+          "xRatio": 0.3,
+          "yRatio": 0.12,
+          "widthRatio": 0.4,
+          "heightRatio": 0.56,
+          "visibleRatio": 0.92
+        },
+        "metrics": {
+          "textDensity": 0.36,
+          "linkDensity": 0.04,
+          "interactiveDensity": 0.22,
+          "mediaDensity": 0,
+          "formDensity": 0.55,
+          "tableDensity": 0,
+          "viewportCoverage": 0.44
+        },
+        "flags": [
+          "FORM_CONTROLS_PRESENT"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 6,
+      "nodesScanned": 360,
+      "candidatesSeen": 7,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 7,
+        "nodesSampled": 360,
+        "elapsedMs": 6,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_form_simple",
+          "rectBuckets": {
+            "x": 3,
+            "y": 1,
+            "w": 4,
+            "h": 6
+          },
+          "visibleAreaBucket": 2,
+          "viewportIntersectionBucket": 9,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": false,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 6,
+          "linkDensityBucket": 0,
+          "mediaControlSeparationHint": false,
+          "headingHint": false,
+          "listHint": false,
+          "cardHint": false,
+          "centralityBucket": 9
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "FORM",
+    "minConfidence": 0.85,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_form_simple",
+    "allowedActions": [
+      "FOCUS_VISIBILITY",
+      "TARGET_SIZE"
+    ],
+    "deniedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "REDUCE_MOTION"
+    ],
+    "requiredReasons": [
+      "FORM_CONTROLS_PRESENT"
+    ],
+    "requiredProblems": [],
+    "forbiddenProblems": [
+      "HIGH_LAYOUT_RISK",
+      "HIGH_INTERACTION_RISK",
+      "MODAL_OVERLAY_PRESENT"
+    ],
+    "riskBands": {
+      "layoutRisk": "MEDIUM",
+      "interactionRisk": "MEDIUM"
+    }
+  }
+}

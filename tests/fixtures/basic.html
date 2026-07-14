@@ -17,9 +17,25 @@
     <main>
       <h1>Fixture content</h1>
       <p>Reading area for scoped mode tests.</p>
+      <p>
+        This fixture intentionally contains enough reading text for SmartScope to identify a meaningful content
+        region. AURA should prefer this main article-like area instead of navigation, controls, or the full document
+        shell. The text is stable so scoped mode tests can assert that tokens are applied to a deterministic page
+        region without relying on remote websites or timing-sensitive network resources.
+      </p>
+      <p>
+        The page includes several sentences that resemble a normal article body. Visual comfort and focus modes need
+        realistic paragraph density to exercise line-height, readable measure, focus overlay, and scoped cleanup
+        behavior. Keeping this content local makes the extension tests hermetic while still giving SmartScope enough
+        structure to score the page as readable content.
+      </p>
       <nav class="sidebar">Navigation block</nav>
       <article>
-        <p>Secondary content.</p>
+        <p>
+          Secondary content remains inside the primary region so the detector can compare nested candidates while
+          still selecting a safe scope. This paragraph gives the article enough substance to avoid ambiguity gates in
+          the SmartScope scoring path.
+        </p>
       </article>
       <button type="button">Action</button>
     </main>

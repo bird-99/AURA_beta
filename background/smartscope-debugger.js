@@ -1,3 +1,5 @@
+import { mutateLocalValue, removeLocalValue } from '../shared/utils.js';
+
 /**
  * @typedef {'PROFILE' | 'APPLY' | 'REMOVE' | 'FALLBACK' | 'ERROR'} SmartScopeDebugAction
  *
@@ -49,11 +51,10 @@ export class SmartScopeDebugger {
     }
 
     try {
-      const existing = await chrome.storage.local.get(this.storageKey);
-      const logs = Array.isArray(existing?.[this.storageKey]) ? existing[this.storageKey] : [];
-      const next = [...logs, { ...entry, timestamp: Date.now() }];
-      const trimmed = next.slice(-this.maxLogs);
-      await chrome.storage.local.set({ [this.storageKey]: trimmed });
+      await mutateLocalValue(this.storageKey, (storedLogs) => {
+        const logs = Array.isArray(storedLogs) ? storedLogs : [];
+        return [...logs, { ...entry, timestamp: Date.now() }].slice(-this.maxLogs);
+      });
     } catch (error) {
       console.warn('[SmartScopeDebugger] Failed to log entry', error);
     }
@@ -81,7 +82,7 @@ export class SmartScopeDebugger {
 
   async clearLogs() {
     try {
-      await chrome.storage.local.remove(this.storageKey);
+      await removeLocalValue(this.storageKey);
     } catch (error) {
       console.warn('[SmartScopeDebugger] Failed to clear logs', error);
     }

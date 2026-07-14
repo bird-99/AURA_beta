@@ -1,6 +1,144 @@
 // shared/utils.js
 
 import { ERROR_CODES, MODE_IDS, STATES } from './constants.js';
+import { getDomain, parse as parseTldts } from './vendor/tldts.esm.min.js';
+
+const TLDTS_OPTIONS = Object.freeze({
+  allowIcannDomains: true,
+  allowPrivateDomains: true,
+  detectIp: true,
+  extractHostname: false,
+  validateHostname: true,
+});
+
+const LEGACY_SECOND_LEVEL_SUFFIXES = new Set([
+  'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'ac.jp', 'co.jp',
+  'com.au', 'net.au', 'org.au', 'gov.au', 'edu.au', 'co.nz',
+]);
+
+const storageMutationTails = new Map();
+
+function getCrossContextStorageLockName(areaName, key) {
+  return `aura-storage:${areaName}:${key}`;
+}
+
+function getCrossContextStorageAreaLockName(areaName) {
+  return `aura-storage:${areaName}:*`;
+}
+
+async function withStorageLock(name, mode, operation) {
+  const lockManager = globalThis.navigator?.locks;
+  if (!lockManager || typeof lockManager.request !== 'function') {
+    return operation();
+  }
+  return lockManager.request(name, { mode }, operation);
+}
+
+async function withCrossContextStorageLock(areaName, key, operation) {
+  return withStorageLock(getCrossContextStorageAreaLockName(areaName), 'shared', () => (
+    withStorageLock(getCrossContextStorageLockName(areaName, key), 'exclusive', operation)
+  ));
+}
+
+export function runStorageAreaTransaction(areaName, operation) {
+  if (!['local', 'session'].includes(areaName)) {
+    return Promise.reject(new TypeError('Storage area must be local or session'));
+  }
+  if (typeof operation !== 'function') {
+    return Promise.reject(new TypeError('Storage transaction callback is required'));
+  }
+  return withStorageLock(getCrossContextStorageAreaLockName(areaName), 'exclusive', operation);
+}
+
+function enqueueStorageMutation(areaName, key, mutation) {
+  const queueKey = `${areaName}:${key}`;
+  const previousTail = storageMutationTails.get(queueKey) || Promise.resolve();
+  const run = previousTail.catch(() => undefined).then(mutation);
+  const settledTail = run.then(
+    () => undefined,
+    () => undefined,
+  ).finally(() => {
+    if (storageMutationTails.get(queueKey) === settledTail) {
+      storageMutationTails.delete(queueKey);
+    }
+  });
+  storageMutationTails.set(queueKey, settledTail);
+  return run;
+}
+
+async function mutateStorageValue(areaName, key, updater) {
+  if (typeof updater !== 'function') {
+    throw new TypeError('Storage updater must be a function');
+  }
+
+  return enqueueStorageMutation(areaName, key, () => withCrossContextStorageLock(areaName, key, async () => {
+    const area = globalThis.chrome?.storage?.[areaName];
+    if (!area?.get || !area?.set) {
+      throw new Error(`chrome.storage.${areaName} unavailable`);
+    }
+
+    try {
+      const data = await area.get(key);
+      const nextValue = await updater(data?.[key]);
+      await area.set({ [key]: nextValue });
+      return nextValue;
+    } catch (error) {
+      const storageError = new Error(`Failed to mutate chrome.storage.${areaName}.${key}`);
+      storageError.cause = error;
+      throw storageError;
+    }
+  }));
+}
+
+export function mutateLocalValue(key, updater) {
+  return mutateStorageValue('local', key, updater);
+}
+
+export function mutateSessionValue(key, updater) {
+  return mutateStorageValue('session', key, updater);
+}
+
+async function replaceStorageValue(areaName, key, value) {
+  return enqueueStorageMutation(areaName, key, () => withCrossContextStorageLock(areaName, key, async () => {
+    const area = globalThis.chrome?.storage?.[areaName];
+    if (!area?.set) throw new Error(`chrome.storage.${areaName} unavailable`);
+    await area.set({ [key]: value });
+    return true;
+  }));
+}
+
+async function removeStorageValue(areaName, key) {
+  return enqueueStorageMutation(areaName, key, () => withCrossContextStorageLock(areaName, key, async () => {
+    const area = globalThis.chrome?.storage?.[areaName];
+    if (!area?.remove) throw new Error(`chrome.storage.${areaName} unavailable`);
+    await area.remove(key);
+    return true;
+  }));
+}
+
+export function removeLocalValue(key) {
+  return removeStorageValue('local', key);
+}
+
+export function removeSessionValue(key) {
+  return removeStorageValue('session', key);
+}
+
+function normalizeHostnameInput(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return { hostname: '', protocol: '' };
+
+  const protocolMatch = /^[a-z][a-z0-9+.-]*:/i.exec(trimmed);
+  try {
+    const parsed = protocolMatch ? new URL(trimmed) : new URL(`http://${trimmed}`);
+    return {
+      hostname: String(parsed.hostname || '').toLowerCase().replace(/\.$/, ''),
+      protocol: String(parsed.protocol || '').toLowerCase(),
+    };
+  } catch (_) {
+    return { hostname: '', protocol: protocolMatch?.[0]?.toLowerCase?.() || '' };
+  }
+}
 
 // ========== STORAGE HELPERS ==========
 
@@ -23,15 +161,14 @@ export async function getFromLocal(key) {
  * Wrapper sécurisé pour chrome.storage.local.set
  * @param {string} key - Clé storage
  * @param {any} value - Valeur à stocker
- * @returns {Promise<boolean>} true si succès, false si erreur
+ * @returns {Promise<boolean>} true si succès; rejette si l'écriture échoue
  */
 export async function setToLocal(key, value) {
   try {
-    await chrome.storage.local.set({ [key]: value });
-    return true;
+    return await replaceStorageValue('local', key, value);
   } catch (error) {
     console.error(`[Utils] setToLocal(${key}) error:`, error);
-    return false;
+    throw error;
   }
 }
 
@@ -54,15 +191,14 @@ export async function getFromSession(key) {
  * Wrapper sécurisé pour chrome.storage.session.set
  * @param {string} key - Clé storage
  * @param {any} value - Valeur à stocker
- * @returns {Promise<boolean>} true si succès, false si erreur
+ * @returns {Promise<boolean>} true si succès; rejette si l'écriture échoue
  */
 export async function setToSession(key, value) {
   try {
-    await chrome.storage.session.set({ [key]: value });
-    return true;
+    return await replaceStorageValue('session', key, value);
   } catch (error) {
     console.error(`[Utils] setToSession(${key}) error:`, error);
-    return false;
+    throw error;
   }
 }
 
@@ -180,7 +316,7 @@ function buildWelcomeFallbackUrl() {
 
 /**
  * Tente d'ouvrir la popup toolbar ou applique un fallback.
- * @param {{ fallback: "openOptions" | "openWelcome" | "notify", reason?: string, modeId?: string }} opts
+ * @param {{ fallback?: "openOptions" | "openWelcome" | "notify", reason?: string, modeId?: string }} opts
  * @returns {Promise<{ used: "openPopup"|"fallback", error?: string }>}
  */
 export async function tryOpenPopupOrFallback(opts = {}) {
@@ -231,20 +367,13 @@ export async function tryOpenPopupOrFallback(opts = {}) {
 // ========== DOMAIN HELPERS (eTLD+1 - Roadmap v5.2) ==========
 
 /**
- * Extrait le siteKey (eTLD+1) d'une URL pour normalisation per-domain prefs/learning
+ * Extrait le siteKey (eTLD+1) d'une URL/hostname pour normalisation per-domain prefs/learning
  *
  * Roadmap v5.2 requirement: Use eTLD+1 (e.g., bbc.co.uk, github.com) via Public Suffix List.
  *
- * Implementation requires bundling a PSL parser (tldts or psl) with extension build.
- * Recommended: `tldts` (modern, maintained, 84KB minified)
+ * Implementation uses `tldts` (PSL-based).
  *
- * Build setup:
- * ```bash
- * npm install tldts
- * # Bundler (esbuild/rollup/webpack) will inline the library
- * ```
- *
- * @param {string} url - Full URL (e.g., https://news.bbc.co.uk/article)
+ * @param {string} url - Full URL or hostname
  * @returns {string} siteKey (eTLD+1) or fallback
  *
  * Examples:
@@ -253,42 +382,26 @@ export async function tryOpenPopupOrFallback(opts = {}) {
  * - https://www.amazon.com/product → amazon.com
  * - http://localhost:3000 → localhost
  * - https://192.168.1.1 → 192.168.1.1
+ * - file:///Users/me/doc.pdf → file
+ * - chrome-extension://<id>/popup.html → chrome-extension
  */
 export function extractDomain(url) {
   try {
-    const hostname = new URL(url).hostname;
-
-    // Fallback 1: localhost
-    if (hostname === 'localhost') {
-      return 'localhost';
+    if (typeof url !== 'string' || url.trim() === '') {
+      return 'unknown';
     }
 
-    // Fallback 2: IP addresses (IPv4)
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-      return hostname;
+    const { hostname, protocol } = normalizeHostnameInput(url);
+    if (protocol === 'file:') return 'file';
+    if (['chrome-extension:', 'chrome:', 'edge:', 'moz-extension:'].includes(protocol)) {
+      return protocol.slice(0, -1);
+    }
+    if (!hostname) {
+      return protocol ? protocol.slice(0, -1) : 'unknown';
     }
 
-    // Fallback 3: IPv6 (contains colons)
-    if (hostname.includes(':')) {
-      return hostname;
-    }
-
-    // eTLD+1 extraction via tldts (bundled via build)
-    // NOTE: This import must be resolved by bundler (esbuild/rollup)
-    // For MVP without bundler: use simple fallback below
-
-    // Option A: With tldts (production - requires bundler)
-    // import { getDomain } from 'tldts';
-    // const siteKey = getDomain(hostname);
-    // return siteKey || hostname;
-
-    // Option B: Simple fallback (MVP without bundler - less accurate for UK/Japanese domains)
-    // Extract last 2 parts of hostname
-    const parts = hostname.split('.');
-    if (parts.length >= 2) {
-      return parts.slice(-2).join('.'); // e.g., bbc.co.uk → co.uk (WRONG for UK!)
-    }
-    return hostname;
+    const siteKey = getDomain(hostname, TLDTS_OPTIONS);
+    return siteKey || hostname;
   } catch (error) {
     console.error('[Utils] extractDomain error:', error);
     return 'unknown';
@@ -296,33 +409,104 @@ export function extractDomain(url) {
 }
 
 /**
- * PRODUCTION NOTE (when implementing):
+ * Parses a user-entered site hostname without accepting URLs, paths or broad
+ * public suffixes. The returned siteKey includes private PSL suffixes.
  *
- * Replace Option B simple fallback with Option A (tldts):
- *
- * ```javascript
- * import { getDomain } from 'tldts';
- *
- * export function extractDomain(url) {
- *   try {
- *     const hostname = new URL(url).hostname;
- *     if (hostname === 'localhost') return 'localhost';
- *     if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return hostname;
- *
- *     const siteKey = getDomain(hostname);
- *     return siteKey || hostname;
- *   } catch (error) {
- *     console.error('[Utils] extractDomain error:', error);
- *     return 'unknown';
- *   }
- * }
- * ```
- *
- * This requires build step:
- * 1. npm install tldts
- * 2. esbuild shared/utils.js --bundle --outfile=shared/utils.bundle.js
- * 3. Update manifest.json to reference shared/utils.bundle.js
+ * @param {unknown} input
+ * @returns {{ ok: true, hostname: string, siteKey: string, isIp: boolean } | { ok: false, reason: string }}
  */
+export function parseStrictDomainInput(input) {
+  const trimmed = typeof input === 'string' ? input.trim().toLowerCase() : '';
+  if (!trimmed) return { ok: false, reason: 'Domain required' };
+  if (trimmed.length > 255) return { ok: false, reason: 'Invalid domain' };
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return { ok: false, reason: 'Enter a domain without a scheme' };
+  if (/[\s/\\?#@]/.test(trimmed)) return { ok: false, reason: 'Enter a domain without a path' };
+
+  let hostname = '';
+  try {
+    const parsedUrl = new URL(`https://${trimmed}`);
+    if (parsedUrl.port || parsedUrl.username || parsedUrl.password) {
+      return { ok: false, reason: 'Enter a domain without credentials or a port' };
+    }
+    hostname = String(parsedUrl.hostname || '').toLowerCase().replace(/\.$/, '');
+  } catch (_) {
+    return { ok: false, reason: 'Invalid domain' };
+  }
+
+  const parsed = parseTldts(hostname, TLDTS_OPTIONS);
+  if (!parsed.hostname) return { ok: false, reason: 'Invalid domain' };
+  if (parsed.isIp || hostname === 'localhost') {
+    return { ok: true, hostname, siteKey: hostname, isIp: parsed.isIp === true };
+  }
+  if (!parsed.domain) return { ok: false, reason: 'Public suffix is not a site' };
+  return {
+    ok: true,
+    hostname,
+    siteKey: parsed.domain.toLowerCase(),
+    isIp: false,
+  };
+}
+
+async function readStorageValueResult(areaName, key) {
+  const area = globalThis.chrome?.storage?.[areaName];
+  if (!area?.get) {
+    return {
+      ok: false,
+      status: 'error',
+      value: null,
+      error: { message: `chrome.storage.${areaName} unavailable` },
+    };
+  }
+
+  try {
+    const data = await area.get(key);
+    if (!Object.prototype.hasOwnProperty.call(data || {}, key) || data[key] === undefined) {
+      return { ok: true, status: 'missing', value: null, error: null };
+    }
+    return { ok: true, status: 'found', value: data[key], error: null };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      value: null,
+      error: { message: error?.message || String(error) },
+    };
+  }
+}
+
+export function readLocalValueResult(key) {
+  return readStorageValueResult('local', key);
+}
+
+export function readSessionValueResult(key) {
+  return readStorageValueResult('session', key);
+}
+
+export function extractLegacyDomain(url) {
+  try {
+    const { hostname, protocol } = normalizeHostnameInput(url);
+    if (protocol === 'file:') return 'file';
+    if (['chrome-extension:', 'chrome:', 'edge:', 'moz-extension:'].includes(protocol)) {
+      return protocol.slice(0, -1);
+    }
+    if (!hostname) return protocol ? protocol.slice(0, -1) : 'unknown';
+
+    const parts = hostname.split('.').filter(Boolean);
+    if (parts.length <= 1 || hostname.startsWith('[')) return hostname;
+    const lastTwo = parts.slice(-2).join('.');
+    if (LEGACY_SECOND_LEVEL_SUFFIXES.has(lastTwo) && parts.length >= 3) {
+      return parts.slice(-3).join('.');
+    }
+    return lastTwo;
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+export function getDomainKeyCandidates(url) {
+  const current = extractDomain(url);
+  return current && current !== 'unknown' ? [current] : [];
+}
 
 // ========== ERROR HELPERS ==========
 

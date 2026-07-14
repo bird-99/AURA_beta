@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AURA Page Clarity Search Fixture</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 32px;
+        color: rgb(31, 41, 55);
+      }
+
+      main {
+        max-width: 880px;
+      }
+
+      .results {
+        display: grid;
+        gap: 14px;
+      }
+
+      .result {
+        border: 1px solid rgb(229, 231, 235);
+        border-radius: 4px;
+        padding: 12px 14px;
+      }
+
+      .result a {
+        color: rgb(55, 65, 81);
+        text-decoration-line: none;
+        outline-style: none;
+        background-color: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <main aria-label="Search results">
+      <h1>Search results for runtime clarity</h1>
+      <section class="results" aria-label="Results">
+        <article class="result">
+          <h2><a id="clarity-result-link" href="#one">Runtime page understanding</a></h2>
+          <p>Compact region signals help AURA target the useful part of a structured page.</p>
+        </article>
+        <article class="result">
+          <h2><a href="#two">Action specific regions</a></h2>
+          <p>Search result cards should become easier to scan without layout changes.</p>
+        </article>
+        <article class="result">
+          <h2><a href="#three">Visible effect probe</a></h2>
+          <p>The extension should prove that the visual effect actually changed styles.</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

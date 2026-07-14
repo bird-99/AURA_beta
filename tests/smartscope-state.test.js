@@ -83,7 +83,17 @@ function buildChromeStub() {
       },
     },
     scripting: {
-      async executeScript() {
+      async executeScript({ func }) {
+        if (String(func).includes('__AURA_DOCUMENT_INSTANCE_ID__')) {
+          return [{
+            frameId: 0,
+            documentId: 'smartscope-state-document',
+            result: {
+              url: 'https://example.com/article',
+              documentInstanceId: 'smartscope-state-instance',
+            },
+          }];
+        }
         return [{ result: { ok: true } }];
       },
       async insertCSS() {

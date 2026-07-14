@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 
+import { cssApplier } from '../../background/css-applier.js';
 import { performanceMonitor } from '../../background/degraded-manager.js';
 import { stateManager } from '../../background/state-manager.js';
 import { telemetry } from '../../background/telemetry.js';
-import { STORAGE_KEYS } from '../../shared/constants.js';
+import { MODE_IDS, STORAGE_KEYS } from '../../shared/constants.js';
 
 function setupSessionStorage() {
   const store = new Map();
@@ -95,4 +96,41 @@ test('triggerDegraded records runtime state once', async () => {
   stateManager.isModeActive = originalIsModeActive;
   stateManager.updateModeState = originalUpdateModeState;
   telemetry.trackDegraded = originalTrackDegraded;
+});
+
+test('triggerDegraded does not overwrite retryable remove failure with DEGRADED', async () => {
+  const store = setupSessionStorage();
+  store.set(STORAGE_KEYS.RUNTIME_STATE, {});
+
+  performanceMonitor.degradedTriggered = false;
+
+  const originalGetTabsWithActiveMode = stateManager.getTabsWithActiveMode;
+  const originalIsModeActive = stateManager.isModeActive;
+  const originalUpdateModeState = stateManager.updateModeState;
+  const originalTrackDegraded = telemetry.trackDegraded;
+  const originalRemoveMode = cssApplier.removeMode;
+
+  stateManager.getTabsWithActiveMode = async (modeId) => (modeId === MODE_IDS.COMFORT_VISUAL ? [123] : []);
+  stateManager.isModeActive = async () => true;
+  const updates = [];
+  stateManager.updateModeState = async (...args) => {
+    updates.push(args);
+  };
+  telemetry.trackDegraded = async () => {};
+  cssApplier.removeMode = async () => ({
+    ok: false,
+    reason: 'RESTORE_CSS_REMOVE_FAILED',
+    retryable: true,
+  });
+
+  try {
+    await performanceMonitor.triggerDegraded('HIGH_OPERATION_RATE');
+    assert.deepEqual(updates, []);
+  } finally {
+    stateManager.getTabsWithActiveMode = originalGetTabsWithActiveMode;
+    stateManager.isModeActive = originalIsModeActive;
+    stateManager.updateModeState = originalUpdateModeState;
+    telemetry.trackDegraded = originalTrackDegraded;
+    cssApplier.removeMode = originalRemoveMode;
+  }
 });

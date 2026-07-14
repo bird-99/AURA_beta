@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "auto",
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "maxNodeModuleJsDepth": 0,
+    "types": []
+  },
+  "files": [
+    "content/top-layer-host.runtime.js",
+    "content/rect-animator.runtime.js",
+    "content/focus-engine-controller.runtime.js",
+    "content/focus-overlay-v2.runtime.js",
+    "content/reading-ruler.runtime.js",
+    "content/page-signals-adapter.runtime.js",
+    "content/content-bootstrap.runtime.js",
+    "content/content-message-router.runtime.js",
+    "content/spa-hooks-v2.runtime.js"
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "name": "doc",
+  "input": {
+    "schemaVersion": 1,
+    "frameId": 0,
+    "collectionEpoch": "aura_pse_collection_doc_v1",
+    "routeEpoch": "aura_pse_route_doc_v1",
+    "viewport": {
+      "w": 1366,
+      "h": 768
+    },
+    "pageHints": {
+      "urlKind": "DOC",
+      "semanticArticleCount": 1,
+      "formCount": 0,
+      "tableCount": 2,
+      "mediaCount": 0,
+      "fixedOrStickyCount": 2,
+      "modalLikeCount": 0
+    },
+    "aggregateMetrics": {
+      "textDensity": 0.72,
+      "linkDensity": 0.2,
+      "interactiveDensity": 0.08,
+      "mediaDensity": 0,
+      "formDensity": 0,
+      "tableDensity": 0.18,
+      "viewportCoverage": 0.7
+    },
+    "blocks": [
+      {
+        "blockId": "b_doc_main",
+        "roleHint": "PRIMARY_CONTENT",
+        "rectRatio": {
+          "xRatio": 0.22,
+          "yRatio": 0.05,
+          "widthRatio": 0.58,
+          "heightRatio": 0.9,
+          "visibleRatio": 0.88
+        },
+        "metrics": {
+          "textDensity": 0.78,
+          "linkDensity": 0.16,
+          "interactiveDensity": 0.06,
+          "mediaDensity": 0,
+          "formDensity": 0,
+          "tableDensity": 0.16,
+          "viewportCoverage": 0.65
+        },
+        "flags": [
+          "DOC_STRUCTURE_DETECTED"
+        ]
+      }
+    ],
+    "stats": {
+      "elapsedMs": 7,
+      "nodesScanned": 510,
+      "candidatesSeen": 11,
+      "budgetHit": false
+    },
+    "observedNodeSignalsV2": {
+      "version": 2,
+      "collectionMode": "BLOCK_SUMMARY",
+      "readiness": {
+        "documentReadyState": "complete",
+        "lateLoadLikely": false,
+        "layoutStableHint": true
+      },
+      "coverage": {
+        "blocksObserved": 1,
+        "blocksWithSignals": 1,
+        "candidatesSeen": 11,
+        "nodesSampled": 510,
+        "elapsedMs": 7,
+        "v2Coverage": 1,
+        "budgetHit": false,
+        "partial": false
+      },
+      "blockSignals": [
+        {
+          "blockId": "b_doc_main",
+          "rectBuckets": {
+            "x": 2,
+            "y": 1,
+            "w": 6,
+            "h": 9
+          },
+          "visibleAreaBucket": 5,
+          "viewportIntersectionBucket": 9,
+          "sameRowHint": false,
+          "sameColumnHint": false,
+          "verticalAdjacencyHint": false,
+          "repeatedSiblingShapeHint": false,
+          "siblingIndexBucket": 0,
+          "siblingCountBucket": 1,
+          "formControlDensityBucket": 0,
+          "linkDensityBucket": 2,
+          "mediaControlSeparationHint": false,
+          "headingHint": true,
+          "listHint": true,
+          "cardHint": false,
+          "centralityBucket": 10
+        }
+      ]
+    }
+  },
+  "expected": {
+    "pageType": "DOC",
+    "minConfidence": 0.7,
+    "maxConfidence": 1,
+    "selectedScopeBlockId": "b_doc_main",
+    "allowedActions": [
+      "READING_COMFORT_TYPOGRAPHY",
+      "FOCUS_VISIBILITY"
+    ],
+    "deniedActions": [
+      "REDUCE_MOTION",
+      "TARGET_SIZE"
+    ],
+    "requiredReasons": [
+      "DOC_STRUCTURE_DETECTED"
+    ],
+    "requiredProblems": [],
+    "riskBands": {
+      "layoutRisk": "MEDIUM",
+      "interactionRisk": "LOW"
+    }
+  }
+}

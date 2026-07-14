@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import '../../content/content-bootstrap.runtime.js';
+import '../../content/content-message-router.runtime.js';
 
 import {
   ACTIONS,
+  CONTENT_MESSAGE_ROUTES_V1,
+  CONTENT_ROUTE_OWNERSHIP,
   DECISIONS,
   MODE_ENGINE_FLAG_DEFAULTS,
   MODE_IDS,
@@ -21,6 +25,8 @@ const FEATURE_FLAGS_REQUEST_TYPE = 'AURA_GET_FEATURE_FLAGS_V1';
 
 const constantsPayload = {
   ACTIONS,
+  CONTENT_MESSAGE_ROUTES_V1,
+  CONTENT_ROUTE_OWNERSHIP,
   DECISIONS,
   MODE_ENGINE_FLAG_DEFAULTS,
   MODE_IDS,
@@ -111,6 +117,7 @@ function setupGlobals({ initialFlags = {} } = {}) {
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
     matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
   };
+  global.window.top = global.window;
   global.location = global.window.location;
 
   global.document = new StubDocument();
@@ -192,16 +199,16 @@ afterEach(() => {
   delete global.performance;
 });
 
-async function waitForTestHook(getter, { timeoutMs = 2000 } = {}) {
+async function waitForTestHook(getter, { timeoutMs = 2000, stepMs = 5, label = 'test hook' } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const value = getter();
     if (value) {
       return value;
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
   }
-  return null;
+  throw new Error(`waitForTestHook timed out after ${timeoutMs}ms waiting for ${label}`);
 }
 
 test('requestV2Reapply sends mode-engine v2 reapply message', async () => {
@@ -210,7 +217,9 @@ test('requestV2Reapply sends mode-engine v2 reapply message', async () => {
   });
 
   await import(`../../content/content-main.js?run=${Date.now()}`);
-  const handler = await waitForTestHook(() => global.window?.AURA?.__TEST_REQUEST_V2_REAPPLY__);
+  const handler = await waitForTestHook(() => global.window?.AURA?.__TEST_REQUEST_V2_REAPPLY__, {
+    label: '__TEST_REQUEST_V2_REAPPLY__',
+  });
   assert.equal(typeof handler, 'function');
 
   await handler('navigate');

@@ -19,11 +19,73 @@ const MODE_ENGINE_SCOPE_OWNER_ATTR = SCOPE_OWNER_ATTR;
 const MODE_ENGINE_SCOPE_TOKENS_ATTR = 'data-aura-scope-tokens';
 const AURA_SURFACE_ATTR = 'data-aura-surface';
 const AURA_FORCE_TEXT_ATTR = 'data-aura-force-text';
+const AURA_SURFACE_KIND_ATTR = 'data-aura-surface-kind';
 const AURA_SURFACE_DEFAULT_BUDGET = { maxNodes: 600, maxMs: 12 };
 const AURA_SURFACE_MIN_AREA = 16000;
 const AURA_SURFACE_LIGHT_THRESHOLD = 0.8;
+const AURA_SURFACE_MAX_SURFACES = 40;
+const AURA_FORCE_TEXT_MAX_NODES = 80;
 const AURA_SURFACE_OBSERVER_DELAY = 200;
-const AURA_SURFACE_SKIP_TAGS = new Set(['IMG', 'VIDEO', 'SVG', 'CANVAS', 'IFRAME']);
+const AURA_SURFACE_SKIP_TAGS = new Set([
+  'AUDIO',
+  'CANVAS',
+  'EMBED',
+  'IFRAME',
+  'IMG',
+  'OBJECT',
+  'PICTURE',
+  'SVG',
+  'VIDEO',
+]);
+const AURA_FORM_CONTROL_TAGS = new Set([
+  'BUTTON',
+  'INPUT',
+  'METER',
+  'OPTGROUP',
+  'OPTION',
+  'PROGRESS',
+  'SELECT',
+  'TEXTAREA',
+]);
+const AURA_CODE_SURFACE_TAGS = new Set([
+  'CODE',
+  'KBD',
+  'PRE',
+  'SAMP',
+]);
+const AURA_APP_SHELL_TAGS = new Set(['ASIDE', 'FOOTER', 'HEADER', 'NAV']);
+const AURA_APP_SHELL_ROLES = new Set([
+  'banner',
+  'complementary',
+  'contentinfo',
+  'menubar',
+  'navigation',
+  'search',
+  'toolbar',
+]);
+const AURA_APP_SHELL_IDENTITY_TOKENS = [
+  'appbar',
+  'app-bar',
+  'app_shell',
+  'app-shell',
+  'commandbar',
+  'command-bar',
+  'drawer',
+  'layout-header',
+  'masthead',
+  'navbar',
+  'nav-bar',
+  'rail',
+  'side-nav',
+  'sidebar',
+  'sidepanel',
+  'side-panel',
+  'stickybar',
+  'sticky-bar',
+  'toolbar',
+  'topbar',
+  'top-bar',
+];
 const AURA_INLINE_SURFACE_DEFAULTS = {
   maxNodes: 600,
   maxMs: 12,
@@ -31,6 +93,7 @@ const AURA_INLINE_SURFACE_DEFAULTS = {
   lumThreshold: 0.8,
   cardLumThreshold: 0.86,
   maxCandidates: 40,
+  maxForceText: 80,
 };
 // Targeted skip list for known decorative/layout containers (keep minimal).
 const AURA_SURFACE_DENYLIST_SELECTORS = [
@@ -64,15 +127,18 @@ const SCOPED_TOKEN_KEYS = [
   '--aura-link-decoration-thickness',
   '--aura-link-decoration-offset',
   '--aura-link-underline-position',
-  '--aura-selection-bg',
-  '--aura-selection-text',
   '--aura-color-scheme',
   '--aura-focus-color',
 ];
 
 const AURA_SURFACE_OBSERVERS = new WeakMap();
+const AURA_SURFACE_TAG_STATE = {
+  surface: new Set(),
+  forceText: new Set(),
+};
 const AURA_INLINE_SURFACE_STATE = {
   prev: new WeakMap(),
+  applied: new WeakMap(),
   touched: new Set(),
 };
 
@@ -224,15 +290,10 @@ function buildScopedTokenMap(modeId, intensity = 1, _profile = null) {
   return {
     '--aura-font-size': `${fontSizePx.toFixed(2)}px`,
     '--aura-line-height': adjustedLineHeight.toFixed(2),
-    '--aura-text-color': 'inherit',
-    '--aura-bg-color': 'transparent',
-    '--aura-link-color': 'revert',
-    '--aura-link-visited-color': 'revert',
-    '--aura-link-hover-color': 'revert',
-    '--aura-link-decoration': 'revert',
-    '--aura-link-decoration-thickness': 'revert',
-    '--aura-link-decoration-offset': 'revert',
-    '--aura-link-underline-position': 'revert',
+    '--aura-measure-max-inline-size': 'none',
+    '--aura-overflow-wrap': 'normal',
+    '--aura-word-break': 'normal',
+    '--aura-hyphens': 'manual',
     '--aura-letter-spacing': `${letterSpacingPx.toFixed(2)}px`,
     '--aura-paragraph-spacing': `${spacingPx.toFixed(2)}px`,
   };
@@ -246,6 +307,11 @@ function buildScopedModeCssV2({
   smoothTransitions = false,
   transitionMs = 160,
   animAttrName = ANIM_ATTR,
+  textScaleEnabled = true,
+  spacingPackEnabled = true,
+  linkEnhanceEnabled = true,
+  linkColorEnabled = linkEnhanceEnabled,
+  typoSmoothingEnabled = true,
 } = {}) {
   const scope = MODE_ENGINE_SCOPE_SELECTOR;
   const normalized = clampIntensity(intensity);
@@ -254,6 +320,10 @@ function buildScopedModeCssV2({
   const headingLineHeight = Math.min(baseLineHeight + 0.05, 2);
   const paragraphSpacing = 10 + normalized * 4;
   const letterSpacing = 0.15 + normalized * 0.2;
+  const textScaleActive = modeId !== MODE_IDS.COMFORT_VISUAL || textScaleEnabled !== false;
+  const spacingPackActive = modeId !== MODE_IDS.COMFORT_VISUAL || spacingPackEnabled !== false;
+  const typoSmoothingActive = modeId === MODE_IDS.COMFORT_VISUAL && typoSmoothingEnabled !== false;
+  const letterSpacingActive = modeId === MODE_IDS.FOCUS || typoSmoothingActive;
   const normalizedTransitionMs =
     typeof transitionMs === 'number' && Number.isFinite(transitionMs) && transitionMs >= 0
       ? Math.round(transitionMs)
@@ -268,27 +338,176 @@ function buildScopedModeCssV2({
     ? `@media (prefers-reduced-motion: reduce) { ${transitionSelector} { animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; } ${scope}, ${scope} :where(*) { scroll-behavior: auto; } }`
     : '';
 
+  const containerLineHeight = spacingPackActive
+    ? ` line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)});`
+    : '';
+  const textLineHeight = spacingPackActive
+    ? ` line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)});`
+    : '';
+  const headingLineHeightRule = spacingPackActive
+    ? ` line-height: var(--aura-line-height, ${headingLineHeight.toFixed(2)});`
+    : '';
+  const containerFontSize = textScaleActive
+    ? ` font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px);`
+    : '';
+  const textFontSize = textScaleActive
+    ? ` font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px);`
+    : '';
+  const containerFontSmoothing = typoSmoothingActive
+    ? ' -webkit-font-smoothing: var(--aura-font-smoothing);'
+    : '';
+  const textLetterSpacing = letterSpacingActive
+    ? ` letter-spacing: var(--aura-letter-spacing, ${letterSpacing.toFixed(2)}px);`
+    : '';
   const containerRule =
-    `${scope} { font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px); line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); color: var(--aura-text-color, inherit); background-color: var(--aura-bg-color, transparent); box-sizing: border-box; }`;
+    `${scope} { --aura-me2-applied: 1;${containerFontSize}${containerLineHeight} color: var(--aura-text-color, inherit); background-color: var(--aura-bg-color, transparent); color-scheme: var(--aura-color-scheme) !important;${containerFontSmoothing} box-sizing: border-box; }`;
   const textRule =
-    `${scope} :is(p, li, blockquote, pre, code, dd, dt) { font-size: var(--aura-font-size, ${baseFontSize.toFixed(2)}px); line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); color: var(--aura-text-color, inherit); letter-spacing: var(--aura-letter-spacing, ${letterSpacing.toFixed(2)}px); max-inline-size: 72ch; }`;
+    `${scope} :is(p, li, blockquote, pre, code, dd, dt) {${textFontSize}${textLineHeight} color: var(--aura-text-color, inherit);${textLetterSpacing} max-inline-size: var(--aura-measure-max-inline-size, none); }`;
+  const darkTextDescendantRule =
+    `${scope} :where(p, li, blockquote, dd, dt, span, em, strong, small, th, td, label, legend, caption, figcaption) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; }`;
+  const proseReflowRule =
+    `${scope} :where(p, blockquote, dd, dt) { overflow-wrap: var(--aura-overflow-wrap, normal); word-break: var(--aura-word-break, normal); hyphens: var(--aura-hyphens, manual); }`;
+  const codeReflowResetRule =
+    `${scope} :where(pre, code, kbd, samp) { overflow-wrap: normal; word-break: normal; hyphens: manual; }`;
   const paragraphRule =
-    `${scope} p + p { margin-top: var(--aura-paragraph-spacing, ${paragraphSpacing.toFixed(2)}px); }`;
+    spacingPackActive
+      ? `${scope} p + p { margin-top: var(--aura-paragraph-spacing, ${paragraphSpacing.toFixed(2)}px); }`
+      : '';
   const headingRule =
-    `${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]), ${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]) * { line-height: var(--aura-line-height, ${headingLineHeight.toFixed(2)}); color: var(--aura-text-color, inherit); -webkit-text-fill-color: currentColor; text-decoration-color: currentColor; }`;
-  const anchorRule = `${scope} :is(a) { color: var(--aura-link-color, revert); text-decoration-line: var(--aura-link-decoration, initial); text-decoration-thickness: var(--aura-link-decoration-thickness, initial); text-underline-offset: var(--aura-link-decoration-offset, initial); text-decoration-color: currentColor; text-underline-position: var(--aura-link-underline-position, initial); }`;
+    `${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]), ${scope} :where(h1, h2, h3, h4, h5, h6, [role="heading"]) * {${headingLineHeightRule} color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; text-decoration-color: currentColor; }`;
+  const anchorColorRule = linkColorEnabled
+    ? `${scope} :is(a, [role="link"]) { color: var(--aura-link-color); -webkit-text-fill-color: var(--aura-link-color); }`
+    : '';
+  const anchorDecorationRule = linkEnhanceEnabled
+    ? `${scope} :is(a, [role="link"]) { text-decoration-line: var(--aura-link-decoration); text-decoration-thickness: var(--aura-link-decoration-thickness); text-underline-offset: var(--aura-link-decoration-offset); text-decoration-color: currentColor; text-underline-position: var(--aura-link-underline-position); }`
+    : '';
   const anchorVisitedRule =
-    `${scope} :is(a):visited { color: var(--aura-link-visited-color, var(--aura-link-color, revert)); }`;
+    linkColorEnabled ? `${scope} :is(a):visited { color: var(--aura-link-visited-color); -webkit-text-fill-color: var(--aura-link-visited-color); }` : '';
   const anchorHoverRule =
-    `${scope} :is(a):hover { color: var(--aura-link-hover-color, var(--aura-link-color, revert)); }`;
-  const reduceMotionRule =
-    reduceMotion && (modeId === MODE_IDS.FOCUS || smoothTransitions)
+    linkColorEnabled ? `${scope} :is(a, [role="link"]):hover { color: var(--aura-link-hover-color); -webkit-text-fill-color: var(--aura-link-hover-color); }` : '';
+  const taggedSurfaceRule =
+    `${scope} [data-aura-surface="1"] { background-color: var(--aura-surface-1) !important; border-color: var(--aura-border-color) !important; }`;
+  const taggedSurfaceRaisedRule =
+    `${scope} [data-aura-surface="2"] { background-color: var(--aura-surface-2) !important; border-color: var(--aura-border-color) !important; }`;
+  const taggedAppShellRule =
+    `${scope} [data-aura-surface-kind="app-shell"] { background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; box-shadow: 0 1px 0 var(--aura-border-color) !important; }`;
+  const taggedAppShellContentRule =
+    `${scope} [data-aura-surface-kind="app-shell"] :where(a, [role="link"], button, [role="button"], span, p, small, strong, em, label, summary) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const forceTextRule =
+    `${scope} [data-aura-force-text="1"] { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; }`;
+  const forceTextContentRule =
+    `${scope} [data-aura-force-text="1"] :where(p, li, span, h1, h2, h3, h4, h5, h6, dt, dd, blockquote, code, pre) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; }`;
+  const borderRule =
+    `${scope} :is(table, thead, tbody, tr, td, th, blockquote, pre, code, hr) { border-color: var(--aura-border-color); }`;
+  const mutedTextRule =
+    `${scope} :is(caption, figcaption, small) { color: var(--aura-muted-text-color, inherit); -webkit-text-fill-color: var(--aura-muted-text-color, inherit); }`;
+  const controlRule =
+    `${scope} :where(input, textarea, select, button) { background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const controlPlaceholderRule =
+    `${scope} :is(input, textarea, select)::placeholder { color: var(--aura-muted-text-color, inherit); -webkit-text-fill-color: var(--aura-muted-text-color, inherit); }`;
+  const darkTokenScope = `${scope}[data-aura-scope-tokens*="--aura-color-scheme"]`;
+  const darkTokenScopeRootRule =
+    `${darkTokenScope} { background-color: var(--aura-bg-color) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkDesignSystemLocalTokenSelector =
+    ':where(dialog, [popover], [aria-modal="true"], [data-theme], [data-color-mode], [data-bs-theme], [data-mui-color-scheme], [data-surface], [data-card], [data-panel], [data-dialog], [data-popover], [data-radix-popper-content-wrapper], [data-headlessui-portal], [data-floating-ui-portal], [class*="card" i], [class*="panel" i], [class*="surface" i], [class*="modal" i], [class*="dialog" i], [class*="popover" i], [class*="dropdown" i], [class*="tooltip" i], [class*="overlay" i], [class*="portal" i], [class*="menu" i], [class*="sheet" i], [class*="drawer" i], [class*="callout" i], [class*="toast" i], [role="dialog"], [role="alertdialog"], [role="menu"], [role="menubar"], [role="listbox"], [role="tooltip"], [role="tree"], [role="tablist"], [role="tabpanel"])';
+  const darkDesignSystemTokenDeclarationsRaw =
+    '--background: var(--aura-bg-color) !important; --foreground: var(--aura-text-color) !important; --card: var(--aura-surface-1) !important; --card-foreground: var(--aura-text-color) !important; --popover: var(--aura-surface-1) !important; --popover-foreground: var(--aura-text-color) !important; --primary: var(--aura-link-color) !important; --primary-foreground: var(--aura-bg-color) !important; --secondary: var(--aura-surface-2) !important; --secondary-foreground: var(--aura-text-color) !important; --muted: var(--aura-surface-2) !important; --muted-foreground: var(--aura-muted-text-color) !important; --accent: var(--aura-surface-2) !important; --accent-foreground: var(--aura-text-color) !important; --destructive: #7f1d1d !important; --destructive-foreground: #fecaca !important; --border: var(--aura-border-color) !important; --input: var(--aura-border-color) !important; --ring: var(--aura-focus-color) !important; --sidebar: var(--aura-surface-1) !important; --sidebar-foreground: var(--aura-text-color) !important; --sidebar-primary: var(--aura-link-color) !important; --sidebar-primary-foreground: var(--aura-bg-color) !important; --sidebar-accent: var(--aura-surface-2) !important; --sidebar-accent-foreground: var(--aura-text-color) !important; --sidebar-border: var(--aura-border-color) !important; --sidebar-ring: var(--aura-focus-color) !important; --surface: var(--aura-surface-1) !important; --surface-foreground: var(--aura-text-color) !important; --panel: var(--aura-surface-1) !important; --panel-foreground: var(--aura-text-color) !important; --color-background: var(--aura-bg-color) !important; --color-foreground: var(--aura-text-color) !important; --color-surface: var(--aura-surface-1) !important; --color-surface-2: var(--aura-surface-2) !important; --color-text: var(--aura-text-color) !important; --color-muted: var(--aura-muted-text-color) !important; --color-border: var(--aura-border-color) !important; --color-link: var(--aura-link-color) !important; --bs-body-bg: var(--aura-bg-color) !important; --bs-body-color: var(--aura-text-color) !important; --bs-border-color: var(--aura-border-color) !important; --bs-link-color: var(--aura-link-color) !important; --bs-link-hover-color: var(--aura-link-hover-color) !important; --bs-secondary-bg: var(--aura-surface-2) !important; --bs-tertiary-bg: var(--aura-surface-1) !important; --bs-emphasis-color: var(--aura-text-color) !important; --mui-palette-background-default: var(--aura-bg-color) !important; --mui-palette-background-paper: var(--aura-surface-1) !important; --mui-palette-text-primary: var(--aura-text-color) !important; --mui-palette-text-secondary: var(--aura-muted-text-color) !important; --mui-palette-divider: var(--aura-border-color) !important; --mui-palette-primary-main: var(--aura-link-color) !important; --mui-palette-action-hover: var(--aura-surface-2) !important; --ant-color-bg-container: var(--aura-surface-1) !important; --ant-color-bg-elevated: var(--aura-surface-1) !important; --ant-color-bg-layout: var(--aura-bg-color) !important; --ant-color-text: var(--aura-text-color) !important; --ant-color-text-secondary: var(--aura-muted-text-color) !important; --ant-color-border: var(--aura-border-color) !important; --ant-color-primary: var(--aura-link-color) !important; --ant-color-link: var(--aura-link-color) !important; --chakra-colors-chakra-body-bg: var(--aura-bg-color) !important; --chakra-colors-chakra-body-text: var(--aura-text-color) !important; --chakra-colors-bg: var(--aura-bg-color) !important; --chakra-colors-bg-subtle: var(--aura-surface-1) !important; --chakra-colors-bg-muted: var(--aura-surface-2) !important; --chakra-colors-fg: var(--aura-text-color) !important; --chakra-colors-fg-muted: var(--aura-muted-text-color) !important; --chakra-colors-border: var(--aura-border-color) !important; --md-sys-color-background: var(--aura-bg-color) !important; --md-sys-color-on-background: var(--aura-text-color) !important; --md-sys-color-surface: var(--aura-surface-1) !important; --md-sys-color-surface-container: var(--aura-surface-1) !important; --md-sys-color-surface-container-high: var(--aura-surface-2) !important; --md-sys-color-on-surface: var(--aura-text-color) !important; --md-sys-color-outline: var(--aura-border-color) !important; --md-sys-color-primary: var(--aura-link-color) !important; --md-sys-color-on-primary: var(--aura-bg-color) !important; --bgColor-default: var(--aura-bg-color) !important; --bgColor-muted: var(--aura-surface-1) !important; --fgColor-default: var(--aura-text-color) !important; --fgColor-muted: var(--aura-muted-text-color) !important; --borderColor-default: var(--aura-border-color) !important; --color-canvas-default: var(--aura-bg-color) !important; --color-canvas-subtle: var(--aura-surface-1) !important; --color-fg-default: var(--aura-text-color) !important; --color-fg-muted: var(--aura-muted-text-color) !important; --color-border-default: var(--aura-border-color) !important; --color-accent-fg: var(--aura-link-color) !important;';
+  const formatSensitiveDesignTokens = new Set([
+    '--background', '--foreground', '--card', '--card-foreground', '--popover', '--popover-foreground',
+    '--primary', '--primary-foreground', '--secondary', '--secondary-foreground', '--muted', '--muted-foreground',
+    '--accent', '--accent-foreground', '--destructive', '--destructive-foreground', '--border', '--input', '--ring',
+    '--sidebar', '--sidebar-foreground', '--sidebar-primary', '--sidebar-primary-foreground', '--sidebar-accent',
+    '--sidebar-accent-foreground', '--sidebar-border', '--sidebar-ring', '--surface', '--surface-foreground',
+    '--panel', '--panel-foreground', '--color-background', '--color-foreground', '--color-surface', '--color-surface-2',
+    '--color-text', '--color-muted', '--color-border', '--color-link',
+  ]);
+  const darkDesignSystemTokenDeclarations = darkDesignSystemTokenDeclarationsRaw
+    .split(';')
+    .map((declaration) => declaration.trim())
+    .filter((declaration) => declaration && !formatSensitiveDesignTokens.has(declaration.split(':', 1)[0].trim()))
+    .join('; ');
+  const darkDesignSystemTokenRule =
+    `${darkTokenScope}, ${darkTokenScope} ${darkDesignSystemLocalTokenSelector} { ${darkDesignSystemTokenDeclarations} }`;
+  const darkOverlaySurfaceSelector =
+    ':where(dialog, [popover], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-portal], [data-floating-ui-portal], [class*="modal" i], [class*="dialog" i], [class*="popover" i], [class*="dropdown" i], [class*="tooltip" i], [class*="overlay" i], [class*="portal" i], [class*="sheet" i], [class*="drawer" i], [role="dialog"], [role="alertdialog"], [role="menu"], [role="menubar"], [role="listbox"], [role="tooltip"], [role="tree"], [role="tablist"])';
+  const darkOverlaySurfaceRule =
+    `${darkTokenScope} ${darkOverlaySurfaceSelector} { background-color: var(--aura-surface-1) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35) !important; }`;
+  const darkOverlaySurfaceContentRule =
+    `${darkTokenScope} ${darkOverlaySurfaceSelector} :where(a, [role="link"], button, [role="button"], input, textarea, select, label, summary, div, span, p, small, strong, em, li) { color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkComplexArticleSurfaceRule =
+    `${darkTokenScope} :where(table, thead, tbody, tfoot, tr, th, td, caption, aside, nav, header, footer, section, article, figure, figcaption, details, summary, fieldset, legend, blockquote, dl, dt, dd, [role="navigation"], [role="complementary"], [role="note"], [role="region"], [role="contentinfo"], [class*="mw-" i], [class*="vector-" i], [class*="wiki" i], [class*="infobox" i], [class*="toc" i], [class*="thumb" i], [class*="navbox" i], [class*="metadata" i], [class*="ambox" i]) { background-color: var(--aura-surface-1) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkComplexArticleImageRule =
+    `${darkTokenScope} :is([class*="mw-" i], [class*="vector-" i], [class*="wiki" i], [class*="infobox" i], [class*="toc" i], [class*="thumb" i], [class*="navbox" i], [class*="metadata" i], [class*="ambox" i], [id*="mw-" i], [id*="wiki" i], [id*="infobox" i], [id*="toc" i], [id*="thumb" i], [id*="navbox" i], [id*="metadata" i], [id*="ambox" i]):not([data-aura-bg-text-gradient="1"]) { background-image: none !important; }`;
+  const darkComplexArticleRaisedSurfaceRule =
+    `${darkTokenScope} :where(th, thead, tfoot, caption, [class*="toc" i], [class*="infobox" i], [class*="thumbinner" i], [class*="navbox" i], [class*="mw-portlet" i], [class*="vector-menu" i]) { background-color: var(--aura-surface-2) !important; }`;
+  const darkPseudoSurfaceSelector =
+    ':where([class*="card" i], [class*="panel" i], [class*="modal" i], [class*="popover" i], [class*="dropdown" i], [class*="tooltip" i], [class*="surface" i], [class*="sheet" i], [class*="drawer" i], [class*="callout" i], [class*="toast" i], [class*="banner" i], [data-surface], [data-card], [data-panel], [data-callout], [popover], [role="dialog"], [role="alertdialog"], [role="tooltip"])';
+  const darkPseudoSurfaceRule =
+    `${darkTokenScope} ${darkPseudoSurfaceSelector}::before, ${darkTokenScope} ${darkPseudoSurfaceSelector}::after { background-color: var(--aura-surface-1) !important; background-image: none !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkPartSurfaceSelector = [
+    'base',
+    'surface',
+    'container',
+    'content',
+    'panel',
+    'card',
+    'dialog',
+    'popover',
+    'menu',
+    'listbox',
+    'option',
+    'item',
+    'body',
+    'header',
+    'footer',
+    'heading',
+    'label',
+    'description',
+  ].map((part) => `${darkTokenScope} :where(*)::part(${part})`).join(', ');
+  const darkPartControlSelector = [
+    'button',
+    'control',
+    'input',
+    'textarea',
+    'select',
+    'checkbox',
+    'radio',
+    'switch',
+    'thumb',
+    'track',
+  ].map((part) => `${darkTokenScope} :where(*)::part(${part})`).join(', ');
+  const darkPartSurfaceRule =
+    `${darkPartSurfaceSelector} { ${darkDesignSystemTokenDeclarations} background-color: var(--aura-surface-1) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; }`;
+  const darkPartControlRule =
+    `${darkPartControlSelector} { ${darkDesignSystemTokenDeclarations} background-color: var(--aura-surface-2) !important; color: var(--aura-text-color) !important; -webkit-text-fill-color: var(--aura-text-color) !important; border-color: var(--aura-border-color) !important; accent-color: var(--aura-focus-color); }`;
+  const comfortSpecific =
+    modeId === MODE_IDS.COMFORT_VISUAL && typoSmoothingActive
       ? [
-          `${scope} :where(*, *::before, *::after) { animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; }`,
-          `${scope}, ${scope} :where(*) { scroll-behavior: auto; }`,
+          `${scope} :is(p, li, blockquote, dd, dt, span, em, strong) { word-spacing: 0.02em; text-rendering: optimizeLegibility; font-kerning: normal; }`,
         ].join(' ')
       : '';
-  const preRule = `${scope} :is(pre, code) { line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); }`;
+  const focusSpecific =
+    modeId === MODE_IDS.FOCUS
+      ? [
+          `${scope} :is(a, button, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--aura-focus-color, #0a84ff); outline-offset: 3px; }`,
+          `${scope} :is(a, button, input, select, textarea, [tabindex]):focus { outline: 2px solid var(--aura-focus-color, #0a84ff); outline-offset: 3px; }`,
+          `${scope} :is(a):focus-visible { text-decoration: underline; text-decoration-offset: 0.2em; text-decoration-thickness: 0.14em; text-decoration-color: currentColor; }`,
+          `${scope} :is(a):focus { text-decoration: underline; text-decoration-offset: 0.2em; text-decoration-thickness: 0.14em; text-decoration-color: currentColor; }`,
+          `${scope} .aura-target-boost { min-inline-size: 24px; min-block-size: 24px; max-inline-size: 100%; padding: 2px 4px; box-sizing: border-box; border-radius: 4px; vertical-align: middle; }`,
+          `${scope} .aura-target-boost:focus-visible { outline: 2px solid var(--aura-focus-color, #0a84ff); outline-offset: 3px; }`,
+        ].join(' ')
+      : '';
+  const reduceMotionSelector =
+    `${scope} :where(*, *::before, *::after):not(video):not(audio):not(canvas):not(svg):not(iframe):not(progress):not([role="progressbar"]):not([aria-busy="true"]):not([data-aura-allow-motion="1"])`;
+  const reduceMotionRule = reduceMotion
+    ? [
+        `${reduceMotionSelector} { animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; }`,
+        `${scope}, ${scope} :where(*) { scroll-behavior: auto; }`,
+      ].join(' ')
+    : '';
+  const preRule = spacingPackActive
+    ? `${scope} :is(pre, code) { line-height: var(--aura-line-height, ${baseLineHeight.toFixed(2)}); }`
+    : '';
   const mediaRule = `${scope} :is(img, video, picture, figure) { max-inline-size: 100%; height: auto; }`;
   const modeSpecific = modeId === MODE_IDS.FOCUS
     ? `${scope} :is(p, li, blockquote) { letter-spacing: var(--aura-letter-spacing, ${letterSpacing.toFixed(2)}px); }`
@@ -306,11 +525,37 @@ function buildScopedModeCssV2({
     prefersReduceMotionRule,
     containerRule,
     textRule,
+    darkTextDescendantRule,
+    proseReflowRule,
+    codeReflowResetRule,
     paragraphRule,
     headingRule,
-    anchorRule,
+    anchorColorRule,
+    anchorDecorationRule,
     anchorVisitedRule,
     anchorHoverRule,
+    taggedSurfaceRule,
+    taggedSurfaceRaisedRule,
+    taggedAppShellRule,
+    taggedAppShellContentRule,
+    forceTextRule,
+    forceTextContentRule,
+    borderRule,
+    mutedTextRule,
+    controlRule,
+    controlPlaceholderRule,
+    darkTokenScopeRootRule,
+    darkDesignSystemTokenRule,
+    darkOverlaySurfaceRule,
+    darkOverlaySurfaceContentRule,
+    darkComplexArticleSurfaceRule,
+    darkComplexArticleImageRule,
+    darkComplexArticleRaisedSurfaceRule,
+    darkPseudoSurfaceRule,
+    darkPartSurfaceRule,
+    darkPartControlRule,
+    comfortSpecific,
+    focusSpecific,
     reduceMotionRule,
     preRule,
     mediaRule,
@@ -705,11 +950,9 @@ function cleanupScopedTokens(element, ownerKey = '', ownedKeys = [], options = {
 
   if (typeof element.removeAttribute === 'function') {
     const preserveScope = options?.preserveScope === true;
-    if (!ownedKeys.length || preserveScope) {
-      element.removeAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR);
-    }
-    element.removeAttribute(SCOPE_OWNER_ATTR);
+    element.removeAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR);
     if (!preserveScope) {
+      element.removeAttribute(SCOPE_OWNER_ATTR);
       const scopeValue = element.getAttribute ? element.getAttribute(SCOPE_ATTR) : null;
       if (scopeValue === SCOPE_ATTR_VALUE) {
         element.removeAttribute(SCOPE_ATTR);
@@ -800,6 +1043,459 @@ function verifyScopeRootBySelector(selector) {
     const detail = `${error?.name || 'Error'}: ${error?.message || 'Unknown error'}`;
     return { ok: false, reason: 'OTHER', detail };
   }
+}
+
+function nowMs() {
+  return globalThis?.performance?.now ? performance.now() : Date.now();
+}
+
+function stripCssValue(value = '') {
+  return `${value}`.trim().replace(/^['"]|['"]$/g, '');
+}
+
+function isElementNode(value) {
+  return value && value.nodeType === 1;
+}
+
+function resolvePostApplyScopeRoot(options = {}) {
+  const ownerKey = normalizeOwnerKey(options.ownerKey);
+  const storedRoot = globalThis?.AURA?.modeEngineScopeRoot;
+  if (isElementNode(storedRoot) && ownsScope(storedRoot, ownerKey)) {
+    return storedRoot;
+  }
+
+  const candidates = [];
+  if (typeof options.scopeSelector === 'string' && options.scopeSelector.trim()) {
+    candidates.push(options.scopeSelector.trim());
+  }
+  candidates.push(`${MODE_ENGINE_SCOPE_SELECTOR}[${SCOPE_OWNER_ATTR}="${ownerKey}"]`);
+
+  for (const selector of candidates) {
+    try {
+      const match = document.querySelector(selector);
+      if (isElementNode(match)) {
+        return match;
+      }
+    } catch (_) {
+      // Ignore invalid selectors supplied by stale background state.
+    }
+  }
+
+  return null;
+}
+
+function describePostApplyScope(element, ownerKey) {
+  if (!element) {
+    return {
+      found: false,
+      connected: false,
+      visible: false,
+      owned: false,
+      tag: '',
+      role: '',
+      fingerprint: '',
+    };
+  }
+
+  const tag = typeof element.tagName === 'string' ? element.tagName.toLowerCase() : '';
+  const role = typeof element.getAttribute === 'function' ? element.getAttribute('role') || '' : '';
+  return {
+    found: true,
+    connected: element.isConnected !== false,
+    visible: isScopeVisible(element),
+    owned: ownsScope(element, ownerKey),
+    tag,
+    role,
+    fingerprint: simpleHash([tag, role, element.getAttribute?.(SCOPE_ATTR) || '', element.getAttribute?.(SCOPE_OWNER_ATTR) || ''].join('|')),
+  };
+}
+
+function isScopeVisible(element) {
+  if (!isElementNode(element)) {
+    return false;
+  }
+
+  const view = element.ownerDocument?.defaultView || globalThis;
+  const computed = typeof view?.getComputedStyle === 'function' ? view.getComputedStyle(element) : null;
+  if (!computed || computed.display === 'none' || computed.visibility === 'hidden') {
+    return false;
+  }
+
+  const rect = typeof element.getBoundingClientRect === 'function' ? element.getBoundingClientRect() : null;
+  if (rect) {
+    return (Number(rect.width) || 0) > 1 && (Number(rect.height) || 0) > 1;
+  }
+
+  return (element.clientWidth || element.offsetWidth || 0) > 1 && (element.clientHeight || element.offsetHeight || 0) > 1;
+}
+
+function makeInspectionCheck(code, passed, extra = {}) {
+  return {
+    code,
+    passed: passed === true,
+    ...extra,
+  };
+}
+
+function measureHorizontalOverflow(element) {
+  const doc = element?.ownerDocument || document;
+  const docEl = doc?.documentElement;
+  const body = doc?.body;
+  const viewportWidth = Number(docEl?.clientWidth) || Number(globalThis?.innerWidth) || 0;
+  const pageOverflow = Math.max(0, Number(docEl?.scrollWidth || 0) - viewportWidth, Number(body?.scrollWidth || 0) - viewportWidth);
+  const scopeOverflow = Math.max(0, Number(element?.scrollWidth || 0) - Number(element?.clientWidth || 0));
+  return Math.max(pageOverflow, scopeOverflow);
+}
+
+function clampCssSnapshotString(value, max = 64) {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function readComputedColor(view, element, property) {
+  if (!view || !element || typeof view.getComputedStyle !== 'function') {
+    return '';
+  }
+  try {
+    return clampCssSnapshotString(view.getComputedStyle(element).getPropertyValue(property));
+  } catch (_) {
+    return '';
+  }
+}
+
+function firstUsableComputedColor(view, elements, property) {
+  for (const element of elements) {
+    const value = readComputedColor(view, element, property);
+    if (value && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)') {
+      return value;
+    }
+  }
+  return '';
+}
+
+function collectVisualSnapshot(scopeRoot) {
+  const doc = scopeRoot?.ownerDocument || document;
+  const view = doc?.defaultView || globalThis;
+  const docEl = doc?.documentElement || null;
+  const body = doc?.body || null;
+  const firstSurface = (() => {
+    try {
+      return scopeRoot?.querySelector?.('main, article, section, [role="main"], [role="region"], form, table, aside') || null;
+    } catch (_) {
+      return null;
+    }
+  })();
+  const firstLink = (() => {
+    try {
+      return scopeRoot?.querySelector?.('a[href], [role="link"]') || null;
+    } catch (_) {
+      return null;
+    }
+  })();
+  const mutedText = (() => {
+    try {
+      return scopeRoot?.querySelector?.('small, figcaption, caption, [class*="muted" i], [class*="secondary" i]') || null;
+    } catch (_) {
+      return null;
+    }
+  })();
+
+  return {
+    backgroundColor: firstUsableComputedColor(view, [body, docEl, scopeRoot], 'background-color'),
+    surfaceColor: firstUsableComputedColor(view, [firstSurface, scopeRoot, body, docEl], 'background-color'),
+    textColor: firstUsableComputedColor(view, [scopeRoot, body, docEl], 'color'),
+    linkColor: firstUsableComputedColor(view, [firstLink], 'color'),
+    mutedTextColor: firstUsableComputedColor(view, [mutedText], 'color'),
+    prefersColorScheme: (() => {
+      try {
+        return view?.matchMedia?.('(prefers-color-scheme: dark)')?.matches ? 'dark' : 'light';
+      } catch (_) {
+        return 'light';
+      }
+    })(),
+  };
+}
+
+function collectInspectionBaseline(options = {}) {
+  const startedAt = nowMs();
+  const ownerKey = normalizeOwnerKey(options.ownerKey);
+  const scopeRoot = resolvePostApplyScopeRoot({ ...options, ownerKey });
+  if (!scopeRoot) {
+    return {
+      ok: false,
+      error: 'NO_SCOPE',
+      baseline: { horizontalOverflow: 0 },
+      stats: { elapsedMs: Math.max(0, Math.round(nowMs() - startedAt)), budgetHit: false },
+    };
+  }
+
+  return {
+    ok: true,
+    baseline: {
+      horizontalOverflow: Math.round(measureHorizontalOverflow(scopeRoot)),
+      visualSnapshot: collectVisualSnapshot(scopeRoot),
+    },
+    stats: {
+      elapsedMs: Math.max(0, Math.round(nowMs() - startedAt)),
+      budgetHit: false,
+    },
+  };
+}
+
+function collectMatchingElements(scopeRoot, selector, budget = {}) {
+  const maxNodes = Math.max(1, Math.min(Number(budget.maxNodes) || 80, 160));
+  const maxVisited = Math.max(maxNodes, Math.min(Number(budget.maxVisited) || maxNodes * 8, 800));
+  const maxMs = Math.max(1, Math.min(Number(budget.maxMs) || 8, 30));
+  const startedAt = nowMs();
+  const nodes = [];
+  let visited = 0;
+  let budgetHit = false;
+
+  const shouldStop = () => {
+    if (nodes.length >= maxNodes || visited >= maxVisited) {
+      budgetHit = true;
+      return true;
+    }
+    if (nowMs() - startedAt > maxMs) {
+      budgetHit = true;
+      return true;
+    }
+    return false;
+  };
+
+  const doc = scopeRoot?.ownerDocument || document;
+  const view = doc?.defaultView || globalThis;
+  const nodeFilter = view?.NodeFilter?.SHOW_ELEMENT || globalThis?.NodeFilter?.SHOW_ELEMENT || 1;
+  const walker = doc?.createTreeWalker ? doc.createTreeWalker(scopeRoot, nodeFilter) : null;
+
+  if (walker) {
+    let current = walker.nextNode();
+    while (current) {
+      visited += 1;
+      if (typeof current.matches === 'function' && current.matches(selector)) {
+        nodes.push(current);
+      }
+      if (shouldStop()) {
+        break;
+      }
+      current = walker.nextNode();
+    }
+    return { nodes, visited, budgetHit };
+  }
+
+  const stack = [];
+  if (scopeRoot?.children && typeof scopeRoot.children.length === 'number') {
+    for (let index = scopeRoot.children.length - 1; index >= 0; index -= 1) {
+      stack.push(scopeRoot.children[index]);
+    }
+  }
+
+  while (stack.length) {
+    const current = stack.pop();
+    visited += 1;
+    if (typeof current?.matches === 'function' && current.matches(selector)) {
+      nodes.push(current);
+    }
+    if (shouldStop()) {
+      break;
+    }
+    const children = current?.children;
+    if (children && typeof children.length === 'number') {
+      for (let index = children.length - 1; index >= 0 && stack.length < maxVisited; index -= 1) {
+        stack.push(children[index]);
+      }
+    }
+  }
+
+  return { nodes, visited, budgetHit };
+}
+
+function inspectClippedText(scopeRoot, budget = {}) {
+  if (!scopeRoot) {
+    return { clipped: false, nodesScanned: 0, budgetHit: false };
+  }
+
+  const selector = 'p, li, blockquote, pre, code, h1, h2, h3, h4, h5, h6, button, a, input, textarea, select';
+  const collected = collectMatchingElements(scopeRoot, selector, budget);
+  const { nodes } = collected;
+  let scanned = 0;
+
+  for (const node of nodes) {
+    scanned += 1;
+    const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+    if (rect && ((Number(rect.width) || 0) <= 1 || (Number(rect.height) || 0) <= 1)) {
+      continue;
+    }
+
+    const view = node.ownerDocument?.defaultView || globalThis;
+    const style = typeof view?.getComputedStyle === 'function' ? view.getComputedStyle(node) : null;
+    const overflowHidden =
+      style?.overflow === 'hidden' ||
+      style?.overflow === 'clip' ||
+      style?.overflowX === 'hidden' ||
+      style?.overflowX === 'clip' ||
+      style?.overflowY === 'hidden' ||
+      style?.overflowY === 'clip';
+    if (!overflowHidden) {
+      continue;
+    }
+
+    const clippedX = Number(node.scrollWidth || 0) > Number(node.clientWidth || 0) + 2;
+    const clippedY = Number(node.scrollHeight || 0) > Number(node.clientHeight || 0) + 2;
+    if (clippedX || clippedY) {
+      return { clipped: true, nodesScanned: Math.max(scanned, collected.visited), budgetHit: collected.budgetHit };
+    }
+  }
+
+  return { clipped: false, nodesScanned: Math.max(scanned, collected.visited), budgetHit: collected.budgetHit };
+}
+
+function isElementInViewport(element) {
+  if (!isElementNode(element) || typeof element.getBoundingClientRect !== 'function') {
+    return false;
+  }
+  const rect = element.getBoundingClientRect();
+  const width = Number(globalThis?.innerWidth) || element.ownerDocument?.documentElement?.clientWidth || 0;
+  const height = Number(globalThis?.innerHeight) || element.ownerDocument?.documentElement?.clientHeight || 0;
+  return (Number(rect.width) || 0) > 0 && (Number(rect.height) || 0) > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= height && rect.left <= width;
+}
+
+function inspectVisibleControls(scopeRoot, budget = {}) {
+  if (!scopeRoot) {
+    return { hiddenControls: 0, nodesScanned: 0, budgetHit: false };
+  }
+
+  const collected = collectMatchingElements(
+    scopeRoot,
+    'button, input, textarea, select, a[href], [role="button"], [tabindex]',
+    budget,
+  );
+  const controls = collected.nodes;
+  let hiddenControls = 0;
+
+  for (const control of controls) {
+    const view = control.ownerDocument?.defaultView || globalThis;
+    const style = typeof view?.getComputedStyle === 'function' ? view.getComputedStyle(control) : null;
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || !isElementInViewport(control)) {
+      hiddenControls += 1;
+    }
+  }
+
+  return { hiddenControls, nodesScanned: Math.max(controls.length, collected.visited), budgetHit: collected.budgetHit };
+}
+
+function inspectPostApply(options = {}) {
+  const startedAt = nowMs();
+  const budget = options?.budget && typeof options.budget === 'object' ? options.budget : {};
+  const ownerKey = normalizeOwnerKey(options.ownerKey);
+  const tokenKeys = Array.isArray(options.tokenKeys)
+    ? options.tokenKeys.filter((key) => typeof key === 'string' && key.startsWith('--aura-')).slice(0, 80)
+    : [];
+  const blockingFailures = [];
+  const warnings = [];
+  const checks = [];
+  const scopeRoot = resolvePostApplyScopeRoot({ ...options, ownerKey });
+  const scope = describePostApplyScope(scopeRoot, ownerKey);
+
+  const scopeVisible = scope.found && scope.connected && scope.visible && scope.owned;
+  checks.push(makeInspectionCheck('SCOPE_STILL_VISIBLE', scopeVisible));
+  if (!scopeVisible) {
+    blockingFailures.push('SCOPE_STILL_VISIBLE');
+  }
+
+  const tokenAttr = scopeRoot?.getAttribute?.(MODE_ENGINE_SCOPE_TOKENS_ATTR) || '';
+  const appliedTokenKeys = tokenAttr.split(',').filter(Boolean);
+  const missingTokenKeys = tokenKeys.filter((key) => !appliedTokenKeys.includes(key));
+  const tokensPresent = scopeVisible && tokenKeys.length > 0 && missingTokenKeys.length === 0;
+  checks.push(
+    makeInspectionCheck('SCOPED_TOKENS_PRESENT', tokensPresent, {
+      expected: tokenKeys.length,
+      missing: missingTokenKeys.length,
+    }),
+  );
+  if (!tokensPresent) {
+    blockingFailures.push('SCOPED_TOKENS_PRESENT');
+  }
+
+  const view = scopeRoot?.ownerDocument?.defaultView || globalThis;
+  const computed = scopeRoot && typeof view?.getComputedStyle === 'function' ? view.getComputedStyle(scopeRoot) : null;
+  const sentinelValue = stripCssValue(computed?.getPropertyValue?.('--aura-me2-applied') || '');
+  const sentinelPresent = sentinelValue === '1';
+  checks.push(makeInspectionCheck('SCOPED_CSS_SENTINEL_PRESENT', sentinelPresent));
+  if (!sentinelPresent) {
+    blockingFailures.push('SCOPED_CSS_SENTINEL_PRESENT');
+  }
+
+  const horizontalOverflow = scopeRoot ? measureHorizontalOverflow(scopeRoot) : 0;
+  const baselineOverflow =
+    typeof options?.baseline?.horizontalOverflow === 'number' && Number.isFinite(options.baseline.horizontalOverflow)
+      ? Math.max(0, options.baseline.horizontalOverflow)
+      : null;
+  const overflowThreshold = Math.max(8, Number(options?.thresholds?.horizontalOverflowPx) || 8);
+  const horizontalPassed =
+    baselineOverflow === null ? true : horizontalOverflow <= baselineOverflow + overflowThreshold;
+  checks.push(
+    makeInspectionCheck('NO_HORIZONTAL_SCROLL_REGRESSION', horizontalPassed, {
+      observed: Math.round(horizontalOverflow),
+      baseline: baselineOverflow === null ? null : Math.round(baselineOverflow),
+      threshold: overflowThreshold,
+    }),
+  );
+  if (!horizontalPassed) {
+    blockingFailures.push('NO_HORIZONTAL_SCROLL_REGRESSION');
+  } else if (baselineOverflow === null && horizontalOverflow > overflowThreshold) {
+    warnings.push('HORIZONTAL_OVERFLOW_BASELINE_MISSING');
+  }
+
+  const clipped = inspectClippedText(scopeRoot, budget);
+  checks.push(
+    makeInspectionCheck('NO_CLIPPED_TEXT', !clipped.clipped, {
+      nodesScanned: clipped.nodesScanned,
+    }),
+  );
+  if (clipped.clipped) {
+    blockingFailures.push('NO_CLIPPED_TEXT');
+  }
+
+  const activeElement = scopeRoot?.ownerDocument?.activeElement || null;
+  if (activeElement && scopeRoot?.contains?.(activeElement)) {
+    const focusVisible = isElementInViewport(activeElement);
+    checks.push(makeInspectionCheck('FOCUS_REMAINS_VISIBLE', focusVisible));
+    if (!focusVisible) {
+      blockingFailures.push('FOCUS_REMAINS_VISIBLE');
+    }
+  }
+
+  const controls = inspectVisibleControls(scopeRoot, budget);
+  checks.push(
+    makeInspectionCheck('NO_CONTROL_OCCLUSION', controls.hiddenControls === 0, {
+      hiddenControls: controls.hiddenControls,
+      nodesScanned: controls.nodesScanned,
+    }),
+  );
+  if (controls.hiddenControls > 0) {
+    warnings.push('CONTROL_VISIBILITY_PROXY_WARNING');
+  }
+
+  const elapsedMs = Math.max(0, Math.round(nowMs() - startedAt));
+  const nodesScanned = clipped.nodesScanned + controls.nodesScanned;
+  const budgetHit =
+    clipped.budgetHit ||
+    controls.budgetHit ||
+    (typeof budget.maxMs === 'number' && budget.maxMs > 0 && elapsedMs > budget.maxMs);
+
+  return {
+    ok: blockingFailures.length === 0,
+    inspected: true,
+    scope,
+    checks,
+    blockingFailures,
+    warnings,
+    stats: {
+      nodesScanned,
+      elapsedMs,
+      budgetHit,
+    },
+  };
 }
 
 function getVisibleArea(element) {
@@ -1015,6 +1711,18 @@ function removeTokensOwned(scopeEl, ownedKeys = []) {
   }
 
   keys.forEach((key) => scopeEl.style.removeProperty(key));
+  if (typeof scopeEl.getAttribute === 'function' && typeof scopeEl.setAttribute === 'function') {
+    const previousTokens = scopeEl.getAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR) || '';
+    const remaining = previousTokens
+      .split(',')
+      .filter(Boolean)
+      .filter((key) => !keys.includes(key));
+    if (remaining.length) {
+      scopeEl.setAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR, remaining.join(','));
+    } else if (typeof scopeEl.removeAttribute === 'function') {
+      scopeEl.removeAttribute(MODE_ENGINE_SCOPE_TOKENS_ATTR);
+    }
+  }
   return { ok: true, removed: keys.length };
 }
 
@@ -1360,6 +2068,215 @@ function looksLikeCard(style) {
   return radius > 0 || borderWidth > 0 || hasShadow;
 }
 
+function getNodeTextLength(element) {
+  if (!element) {
+    return 0;
+  }
+  const text = (element.innerText || element.textContent || '').trim();
+  return text.length;
+}
+
+function getNodeIdentityText(element) {
+  if (!element) {
+    return '';
+  }
+  const className = typeof element.className === 'string'
+    ? element.className
+    : typeof element.getAttribute === 'function'
+      ? element.getAttribute('class') || ''
+      : '';
+  const id = typeof element.id === 'string'
+    ? element.id
+    : typeof element.getAttribute === 'function'
+      ? element.getAttribute('id') || ''
+      : '';
+  const role = typeof element.getAttribute === 'function' ? element.getAttribute('role') || '' : '';
+  return `${element.tagName || ''} ${id} ${className} ${role}`.toLowerCase();
+}
+
+function hasSelectorMatch(element, selector) {
+  if (!element || typeof selector !== 'string') {
+    return false;
+  }
+  try {
+    if (typeof element.matches === 'function' && element.matches(selector)) {
+      return true;
+    }
+    if (typeof element.closest === 'function' && element.closest(selector)) {
+      return true;
+    }
+  } catch (_) {
+    return false;
+  }
+  return false;
+}
+
+function isCodeBlockLike(element) {
+  if (!element) {
+    return false;
+  }
+  if (['CODE', 'KBD', 'PRE', 'SAMP'].includes(element.tagName)) {
+    return true;
+  }
+  return hasSelectorMatch(element, 'pre, code, kbd, samp');
+}
+
+function isEditableOrCodeEditorLike(element) {
+  if (!element) {
+    return false;
+  }
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(element.tagName)) {
+    return true;
+  }
+  if (element.isContentEditable === true) {
+    return true;
+  }
+  const contentEditable = typeof element.getAttribute === 'function'
+    ? element.getAttribute('contenteditable')
+    : null;
+  if (contentEditable && contentEditable.toLowerCase() !== 'false') {
+    return true;
+  }
+
+  const role = typeof element.getAttribute === 'function'
+    ? (element.getAttribute('role') || '').toLowerCase()
+    : '';
+  if (['combobox', 'searchbox', 'textbox'].includes(role)) {
+    return true;
+  }
+
+  if (hasSelectorMatch(element, '[contenteditable=""], [contenteditable="true"], [role="textbox"], [role="searchbox"], [role="combobox"]')) {
+    return true;
+  }
+
+  const identity = getNodeIdentityText(element);
+  return [
+    'ace_editor',
+    'cm-editor',
+    'codemirror',
+    'monaco-editor',
+    'prosemirror',
+  ].some((token) => identity.includes(token));
+}
+
+function hasProtectedMediaSurface(element, area = 0) {
+  if (!element) {
+    return false;
+  }
+  if (AURA_SURFACE_SKIP_TAGS.has(element.tagName)) {
+    return true;
+  }
+  if (typeof element.querySelector !== 'function') {
+    return false;
+  }
+
+  let media = null;
+  try {
+    media = element.querySelector('img, video, canvas, svg, iframe, audio, picture, object, embed');
+  } catch (_) {
+    return false;
+  }
+  if (!media) {
+    return false;
+  }
+
+  const textLength = getNodeTextLength(element);
+  if (textLength >= 120) {
+    return false;
+  }
+
+  const mediaArea = getElementArea(media);
+  const candidateArea = Number.isFinite(area) && area > 0 ? area : getElementArea(element);
+  return textLength < 40 || (candidateArea > 0 && mediaArea / candidateArea >= 0.45);
+}
+
+function isDecorativeGradientBackground(backgroundImage = '') {
+  const value = typeof backgroundImage === 'string' ? backgroundImage.trim().toLowerCase() : '';
+  if (!value || value === 'none') {
+    return false;
+  }
+  if (/\burl\s*\(/.test(value) || /\bimage-set\s*\(/.test(value) || /\bcross-fade\s*\(/.test(value)) {
+    return false;
+  }
+  return /\b(?:repeating-)?(?:linear|radial|conic)-gradient\s*\(/.test(value);
+}
+
+function isTextClippedBackground(element, style = null) {
+  const values = [
+    style?.backgroundClip,
+    style?.webkitBackgroundClip,
+    style?.WebkitBackgroundClip,
+    typeof style?.getPropertyValue === 'function' ? style.getPropertyValue('background-clip') : '',
+    typeof style?.getPropertyValue === 'function' ? style.getPropertyValue('-webkit-background-clip') : '',
+    typeof element?.style?.getPropertyValue === 'function' ? element.style.getPropertyValue('background-clip') : '',
+    typeof element?.style?.getPropertyValue === 'function' ? element.style.getPropertyValue('-webkit-background-clip') : '',
+  ];
+  return values.some((value) => /\btext\b/i.test(String(value || '')));
+}
+
+function isDarkTransformProtectedNode(element, style = null, area = 0) {
+  if (!element) {
+    return true;
+  }
+  if (AURA_SURFACE_SKIP_TAGS.has(element.tagName)) {
+    return true;
+  }
+  if (isSurfaceDenylisted(element) && !isDecorativeGradientBackground(style?.backgroundImage)) {
+    return true;
+  }
+  if (isCodeBlockLike(element) || isEditableOrCodeEditorLike(element)) {
+    return true;
+  }
+  if (
+    style?.backgroundImage
+    && style.backgroundImage !== 'none'
+    && !isDecorativeGradientBackground(style.backgroundImage)
+  ) {
+    return true;
+  }
+  return hasProtectedMediaSurface(element, area);
+}
+
+function countFormControls(element) {
+  if (!element || typeof element.querySelectorAll !== 'function') {
+    return 0;
+  }
+  try {
+    return element.querySelectorAll('input, textarea, select, button').length;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function classifyDarkSurfaceKind(element, style) {
+  if (!element) {
+    return 'panel';
+  }
+  const role = typeof element.getAttribute === 'function'
+    ? (element.getAttribute('role') || '').toLowerCase()
+    : '';
+  const identity = getNodeIdentityText(element);
+  const position = `${style?.position || ''}`.toLowerCase();
+  const isAppShell =
+    AURA_APP_SHELL_TAGS.has(element.tagName)
+    || AURA_APP_SHELL_ROLES.has(role)
+    || AURA_APP_SHELL_IDENTITY_TOKENS.some((token) => identity.includes(token))
+    || (
+      (position === 'fixed' || position === 'sticky')
+      && !['dialog', 'alertdialog', 'tooltip', 'listbox'].includes(role)
+    );
+  if (isAppShell) {
+    return 'app-shell';
+  }
+  if (element.tagName === 'FORM' || role === 'form' || countFormControls(element) >= 2) {
+    return 'form';
+  }
+  if (looksLikeCard(style)) {
+    return 'card';
+  }
+  return 'panel';
+}
+
 function resolveEffectiveBackground(element, scopeRoot, fallbackBackground) {
   if (!element || !scopeRoot) {
     return fallbackBackground || null;
@@ -1420,6 +2337,29 @@ function isSurfaceDenylisted(node) {
   return AURA_SURFACE_DENYLIST_SELECTORS.some((selector) => node.closest(selector));
 }
 
+function isNativeFormControlNode(node) {
+  return Boolean(node?.tagName && AURA_FORM_CONTROL_TAGS.has(String(node.tagName).toUpperCase()));
+}
+
+function isDedicatedDarkSurfaceNode(node) {
+  return Boolean(node?.tagName && AURA_CODE_SURFACE_TAGS.has(String(node.tagName).toUpperCase()));
+}
+
+function isKnownComplexArticleSurface(element) {
+  if (!element || element.nodeType !== 1) {
+    return false;
+  }
+  const signature = [
+    element.className || '',
+    element.id || '',
+    element.getAttribute?.('role') || '',
+  ].join(' ').toLowerCase();
+  return /\b(?:infobox|toc|thumb|thumbinner|navbox|metadata|ambox|portal)\b/.test(signature)
+    || signature.includes('mw-')
+    || signature.includes('vector-')
+    || signature.includes('wiki');
+}
+
 function readInlineValue(style, property) {
   if (!style || typeof style.getPropertyValue !== 'function') {
     return { value: null, priority: '' };
@@ -1432,21 +2372,103 @@ function readInlineValue(style, property) {
   };
 }
 
+function hasInlineTextColorOverride(element) {
+  if (!element?.style) {
+    return false;
+  }
+  return Boolean(
+    readInlineValue(element.style, 'color').value
+      || readInlineValue(element.style, '-webkit-text-fill-color').value,
+  );
+}
+
+function isPriorityTextForceCandidate(element, style) {
+  if (!element || !style || !hasSignificantText(element, style)) {
+    return false;
+  }
+  const tagName = `${element.tagName || ''}`.toUpperCase();
+  const role = `${element.getAttribute?.('role') || ''}`.toLowerCase();
+  return /^H[1-6]$/.test(tagName) || role === 'heading' || hasInlineTextColorOverride(element);
+}
+
 function captureInlineOverride(element) {
   if (!element?.style) {
     return null;
   }
   const bg = readInlineValue(element.style, 'background-color');
+  const bgImage = readInlineValue(element.style, 'background-image');
   const border = readInlineValue(element.style, 'border-color');
   const color = readInlineValue(element.style, 'color');
+  const textFillColor = readInlineValue(element.style, '-webkit-text-fill-color');
   return {
     bg: bg.value,
     bgPriority: bg.priority,
+    bgImage: bgImage.value,
+    bgImagePriority: bgImage.priority,
     border: border.value,
     borderPriority: border.priority,
     color: color.value,
     colorPriority: color.priority,
+    textFillColor: textFillColor.value,
+    textFillColorPriority: textFillColor.priority,
   };
+}
+
+const AURA_INLINE_OVERRIDE_FIELDS = {
+  'background-color': ['bg', 'bgPriority'],
+  'background-image': ['bgImage', 'bgImagePriority'],
+  'border-color': ['border', 'borderPriority'],
+  color: ['color', 'colorPriority'],
+  '-webkit-text-fill-color': ['textFillColor', 'textFillColorPriority'],
+};
+
+function updateInlineSnapshotProperty(snapshot, property, inlineValue) {
+  const fields = AURA_INLINE_OVERRIDE_FIELDS[property];
+  if (!snapshot || !fields) {
+    return;
+  }
+  snapshot[fields[0]] = inlineValue?.value || null;
+  snapshot[fields[1]] = inlineValue?.priority || '';
+}
+
+function getTrackedInlineSnapshot(state, element) {
+  let snapshot = state.prev.get(element);
+  if (!snapshot) {
+    snapshot = captureInlineOverride(element);
+    if (snapshot) {
+      state.prev.set(element, snapshot);
+    }
+  }
+  return snapshot;
+}
+
+function inlineValueMatchesTrackedAura(inlineValue, trackedValue) {
+  if (!trackedValue) {
+    return false;
+  }
+  return (
+    (inlineValue?.value || null) === (trackedValue.value || null)
+    && (inlineValue?.priority || '') === (trackedValue.priority || '')
+  );
+}
+
+function prepareInlineAuraOverride(state, element, property) {
+  const current = readInlineValue(element?.style, property);
+  const snapshot = getTrackedInlineSnapshot(state, element);
+  const applied = state.applied.get(element) || {};
+  if (!inlineValueMatchesTrackedAura(current, applied[property])) {
+    updateInlineSnapshotProperty(snapshot, property, current);
+  }
+  return applied;
+}
+
+function rememberInlineAuraOverride(state, element, property, value, priority = '') {
+  const applied = state.applied.get(element) || {};
+  applied[property] = {
+    value: value || null,
+    priority: priority || '',
+  };
+  state.applied.set(element, applied);
 }
 
 function restoreInlineValue(element, property, value, priority) {
@@ -1460,13 +2482,22 @@ function restoreInlineValue(element, property, value, priority) {
   element.style.setProperty(property, value, priority || '');
 }
 
-function restoreInlineOverride(element, snapshot) {
+function restoreInlineOverride(element, snapshot, applied = {}) {
   if (!snapshot || !element?.style) {
     return;
   }
-  restoreInlineValue(element, 'background-color', snapshot.bg, snapshot.bgPriority);
-  restoreInlineValue(element, 'border-color', snapshot.border, snapshot.borderPriority);
-  restoreInlineValue(element, 'color', snapshot.color, snapshot.colorPriority);
+  const restoreIfStillAura = (property, value, priority) => {
+    const current = readInlineValue(element.style, property);
+    const tracked = applied?.[property] || null;
+    if (tracked && inlineValueMatchesTrackedAura(current, tracked)) {
+      restoreInlineValue(element, property, value, priority);
+    }
+  };
+  restoreIfStillAura('background-color', snapshot.bg, snapshot.bgPriority);
+  restoreIfStillAura('background-image', snapshot.bgImage, snapshot.bgImagePriority);
+  restoreIfStillAura('border-color', snapshot.border, snapshot.borderPriority);
+  restoreIfStillAura('color', snapshot.color, snapshot.colorPriority);
+  restoreIfStillAura('-webkit-text-fill-color', snapshot.textFillColor, snapshot.textFillColorPriority);
 }
 
 function hasVisibleBorder(style) {
@@ -1550,6 +2581,9 @@ function applyDarkSurfaceInlineOverrides(scopeRoot, opts = {}) {
   const maxCandidates = Number.isFinite(opts.maxCandidates)
     ? Math.max(1, opts.maxCandidates)
     : AURA_INLINE_SURFACE_DEFAULTS.maxCandidates;
+  const maxForceText = Number.isFinite(opts.maxForceText)
+    ? Math.max(0, opts.maxForceText)
+    : AURA_INLINE_SURFACE_DEFAULTS.maxForceText;
 
   const start = typeof view.performance?.now === 'function' ? view.performance.now() : Date.now();
   const walker = scopeRoot.ownerDocument?.createTreeWalker
@@ -1560,6 +2594,7 @@ function applyDarkSurfaceInlineOverrides(scopeRoot, opts = {}) {
   let scanned = 0;
   let budgetHit = false;
   const candidates = [];
+  const forceTextCandidates = [];
 
   let node = walker ? walker.currentNode : scopeRoot;
   while (node) {
@@ -1575,18 +2610,7 @@ function applyDarkSurfaceInlineOverrides(scopeRoot, opts = {}) {
       node = walker ? walker.nextNode() : null;
       continue;
     }
-
-    if (AURA_SURFACE_SKIP_TAGS.has(node.tagName)) {
-      scanned += 1;
-      node = walker ? walker.nextNode() : null;
-      continue;
-    }
-
-    if (isSurfaceDenylisted(node)) {
-      scanned += 1;
-      node = walker ? walker.nextNode() : null;
-      continue;
-    }
+    const tagName = String(node.tagName || '').toUpperCase();
 
     const style = view.getComputedStyle(node);
     if (!style || isElementHidden(node, style)) {
@@ -1595,87 +2619,161 @@ function applyDarkSurfaceInlineOverrides(scopeRoot, opts = {}) {
       continue;
     }
 
-    if (style.backgroundImage && style.backgroundImage !== 'none') {
+    const hasDecorativeGradient = isDecorativeGradientBackground(style.backgroundImage);
+    const isNativeControl = isNativeFormControlNode(node);
+    if ((isNativeControl || isDedicatedDarkSurfaceNode(node)) && !hasDecorativeGradient) {
       scanned += 1;
       node = walker ? walker.nextNode() : null;
       continue;
     }
 
     const area = getElementArea(node);
-    if (!area || area < minArea) {
+    const knownComplexArticleSurface = isKnownComplexArticleSurface(node);
+    const hasGradientSurfaceArea = Boolean(hasDecorativeGradient && area && area >= 24);
+    const hasSurfaceArea = Boolean(
+      area && (area >= minArea || hasGradientSurfaceArea || (knownComplexArticleSurface && area >= 400)),
+    );
+    if (
+      !hasSurfaceArea
+      && forceTextCandidates.length < maxForceText
+      && isPriorityTextForceCandidate(node, style)
+      && shouldForceTextColor(node, scopeRoot, '--aura-surface-1')
+    ) {
+      forceTextCandidates.push(node);
+    }
+    if (!area || !hasSurfaceArea) {
       scanned += 1;
       node = walker ? walker.nextNode() : null;
       continue;
     }
 
+    if (isDarkTransformProtectedNode(node, style, area)) {
+      scanned += 1;
+      node = walker ? walker.nextNode() : null;
+      continue;
+    }
+
+    if (
+      forceTextCandidates.length < maxForceText
+      && hasSignificantText(node, style)
+      && shouldForceTextColor(node, scopeRoot, '--aura-surface-1')
+    ) {
+      forceTextCandidates.push(node);
+    }
+
     const background = resolveEffectiveBackground(node, scopeRoot, fallbackBackground);
-    if (!background || background.alpha < 0.85) {
+    if ((!background || background.alpha < 0.85) && !hasDecorativeGradient) {
       scanned += 1;
       node = walker ? walker.nextNode() : null;
       continue;
     }
 
     const luminance = computeLuminance(background);
-    const isCard = looksLikeCard(style);
+    const isCard = knownComplexArticleSurface || looksLikeCard(style);
     const threshold = isCard ? cardLumThreshold : lumThreshold;
-    if (typeof luminance === 'number' && luminance > threshold) {
-      candidates.push({ element: node, area, isCard, luminance });
+    if (hasDecorativeGradient || (typeof luminance === 'number' && luminance > threshold)) {
+      candidates.push({
+        element: node,
+        area,
+        isCard,
+        isNativeControl,
+        isDocumentRoot: tagName === 'HTML' || tagName === 'BODY',
+        knownComplexArticleSurface,
+        luminance,
+        hasDecorativeGradient,
+      });
     }
 
     scanned += 1;
     node = walker ? walker.nextNode() : null;
   }
 
-  candidates.sort((a, b) => b.area - a.area);
+  if (budgetHit) {
+    if (isModeEngineDebugEnabled()) {
+      modeEngineDebugLog('[ME2] inline surface override budget hit', {
+        scanned,
+        maxNodes,
+        maxMs,
+        candidates: candidates.length,
+      });
+    }
+  }
+
+  candidates.sort((a, b) => {
+    if (a.hasDecorativeGradient !== b.hasDecorativeGradient) {
+      return a.hasDecorativeGradient ? -1 : 1;
+    }
+    return b.area - a.area;
+  });
   const shortlist = candidates.slice(0, maxCandidates);
 
   let overridden = 0;
   let forcedText = 0;
   const state = AURA_INLINE_SURFACE_STATE;
+  const forcedTextElements = new Set();
 
-  shortlist.forEach(({ element, isCard }) => {
+  const forceTextElement = (element) => {
+    if (!element || !element.style || forcedTextElements.has(element)) {
+      return;
+    }
+    prepareInlineAuraOverride(state, element, 'color');
+    element.style.setProperty('color', 'var(--aura-text-color)', 'important');
+    rememberInlineAuraOverride(state, element, 'color', 'var(--aura-text-color)', 'important');
+    prepareInlineAuraOverride(state, element, '-webkit-text-fill-color');
+    element.style.setProperty('-webkit-text-fill-color', 'var(--aura-text-color)', 'important');
+    rememberInlineAuraOverride(state, element, '-webkit-text-fill-color', 'var(--aura-text-color)', 'important');
+    state.touched.add(element);
+    forcedTextElements.add(element);
+    forcedText += 1;
+  };
+
+  shortlist.forEach(({ element, isCard, isNativeControl, isDocumentRoot, knownComplexArticleSurface }) => {
     if (!element || !element.style) {
       return;
     }
-    if (!state.prev.has(element)) {
-      const snapshot = captureInlineOverride(element);
-      if (snapshot) {
-        state.prev.set(element, snapshot);
-      }
-    }
 
-    const surfaceToken = isCard ? '--aura-surface-2' : '--aura-surface-1';
-    element.style.setProperty('background-color', `var(${surfaceToken})`, 'important');
+    const surfaceToken = isDocumentRoot
+      ? '--aura-bg-color'
+      : isNativeControl || (isCard && !knownComplexArticleSurface)
+        ? '--aura-surface-2'
+        : '--aura-surface-1';
+    const backgroundValue = isDocumentRoot ? 'var(--aura-bg-color, #0b1020)' : `var(${surfaceToken})`;
+    const style = view.getComputedStyle(element);
+    prepareInlineAuraOverride(state, element, 'background-color');
+    element.style.setProperty('background-color', backgroundValue, 'important');
+    rememberInlineAuraOverride(state, element, 'background-color', backgroundValue, 'important');
+    if (isDecorativeGradientBackground(style.backgroundImage) && !isTextClippedBackground(element, style)) {
+      prepareInlineAuraOverride(state, element, 'background-image');
+      element.style.setProperty('background-image', 'none', 'important');
+      rememberInlineAuraOverride(state, element, 'background-image', 'none', 'important');
+    }
     overridden += 1;
 
-    const style = view.getComputedStyle(element);
     if (hasVisibleBorder(style)) {
+      prepareInlineAuraOverride(state, element, 'border-color');
       element.style.setProperty('border-color', 'var(--aura-border-color)', 'important');
+      rememberInlineAuraOverride(state, element, 'border-color', 'var(--aura-border-color)', 'important');
     }
 
     if (hasSignificantText(element, style) && shouldForceTextColor(element, scopeRoot, surfaceToken)) {
-      element.style.setProperty('color', 'var(--aura-text-color)', 'important');
-      forcedText += 1;
+      forceTextElement(element);
     }
 
     state.touched.add(element);
   });
 
-  const result = { ok: true, scanned, overridden, forcedText };
-  if (budgetHit) {
-    result.budgetHit = true;
-    if (isModeEngineDebugEnabled()) {
-      modeEngineDebugLog('[ME2] inline surface override budget hit', {
-        scanned,
-        overridden,
-        forcedText,
-        maxNodes,
-        maxMs,
-      });
-    }
-  }
+  forceTextCandidates.forEach((element) => {
+    forceTextElement(element);
+  });
 
-  return result;
+  return {
+    ok: budgetHit !== true,
+    scanned,
+    overridden,
+    forcedText,
+    budgetHit,
+    ...(budgetHit ? { reason: 'budget-hit-partial' } : {}),
+  };
 }
 
 function clearDarkSurfaceInlineOverrides() {
@@ -1683,16 +2781,18 @@ function clearDarkSurfaceInlineOverrides() {
   let restored = 0;
 
   state.touched.forEach((element) => {
-    if (!element || element.isConnected === false) {
+    if (!element?.style) {
       return;
     }
     const snapshot = state.prev.get(element);
-    restoreInlineOverride(element, snapshot);
+    const applied = state.applied.get(element) || {};
+    restoreInlineOverride(element, snapshot, applied);
     restored += 1;
   });
 
   state.touched.clear();
   state.prev = new WeakMap();
+  state.applied = new WeakMap();
 
   return { ok: true, restored };
 }
@@ -1709,6 +2809,12 @@ function applyDarkSurfaceTags(scopeEl, options = {}) {
 
   const maxNodes = Number.isFinite(options.maxNodes) ? options.maxNodes : AURA_SURFACE_DEFAULT_BUDGET.maxNodes;
   const maxMs = Number.isFinite(options.maxMs) ? options.maxMs : AURA_SURFACE_DEFAULT_BUDGET.maxMs;
+  const maxSurfaces = Number.isFinite(options.maxSurfaces)
+    ? Math.max(0, Math.floor(options.maxSurfaces))
+    : AURA_SURFACE_MAX_SURFACES;
+  const maxForceText = Number.isFinite(options.maxForceText)
+    ? Math.max(0, Math.floor(options.maxForceText))
+    : AURA_FORCE_TEXT_MAX_NODES;
   const surfaceLum = Number.isFinite(options.surfaceLum) ? options.surfaceLum : AURA_SURFACE_LIGHT_THRESHOLD;
   const minArea = Number.isFinite(options.minArea) ? options.minArea : AURA_SURFACE_MIN_AREA;
 
@@ -1738,18 +2844,6 @@ function applyDarkSurfaceTags(scopeEl, options = {}) {
       continue;
     }
 
-    if (AURA_SURFACE_SKIP_TAGS.has(node.tagName)) {
-      scanned += 1;
-      node = walker ? walker.nextNode() : null;
-      continue;
-    }
-
-    if (isSurfaceDenylisted(node)) {
-      scanned += 1;
-      node = walker ? walker.nextNode() : null;
-      continue;
-    }
-
     const style = view.getComputedStyle(node);
     if (!style || isElementHidden(node, style)) {
       scanned += 1;
@@ -1757,25 +2851,29 @@ function applyDarkSurfaceTags(scopeEl, options = {}) {
       continue;
     }
 
-    if (style.backgroundImage && style.backgroundImage !== 'none') {
+    const area = getElementArea(node);
+    if (isDarkTransformProtectedNode(node, style, area)) {
       scanned += 1;
       node = walker ? walker.nextNode() : null;
       continue;
     }
 
-    if (!node.hasAttribute(AURA_SURFACE_ATTR) && isLargeEnough(node, minArea)) {
+    if (surfaced < maxSurfaces && !node.hasAttribute(AURA_SURFACE_ATTR) && area > minArea) {
       const { rgba, isTransparent } = getComputedBgColor(node);
       if (rgba && !isTransparent && rgba.alpha >= 0.85) {
         const luminance = relativeLuminance(rgba);
         if (typeof luminance === 'number' && luminance > surfaceLum) {
-          const tag = looksLikeCard(style) ? '2' : '1';
+          const surfaceKind = classifyDarkSurfaceKind(node, style);
+          const tag = surfaceKind === 'app-shell' || looksLikeCard(style) ? '2' : '1';
           node.setAttribute(AURA_SURFACE_ATTR, tag);
+          node.setAttribute(AURA_SURFACE_KIND_ATTR, surfaceKind);
+          AURA_SURFACE_TAG_STATE.surface.add(node);
           surfaced += 1;
         }
       }
     }
 
-    if (!node.hasAttribute(AURA_FORCE_TEXT_ATTR) && hasSignificantText(node, style)) {
+    if (forcedText < maxForceText && !node.hasAttribute(AURA_FORCE_TEXT_ATTR) && hasSignificantText(node, style)) {
       const textColor = getComputedTextColor(node);
       const background = resolveEffectiveBackground(node, scopeEl, fallbackBackground);
       if (textColor && background) {
@@ -1790,6 +2888,7 @@ function applyDarkSurfaceTags(scopeEl, options = {}) {
         const isDarkBackground = Number.isFinite(bgLum) && bgLum < 0.4;
         if ((Number.isFinite(ratio) && ratio < 4.5) || (isDarkText && isDarkBackground)) {
           node.setAttribute(AURA_FORCE_TEXT_ATTR, '1');
+          AURA_SURFACE_TAG_STATE.forceText.add(node);
           forcedText += 1;
         }
       }
@@ -1803,17 +2902,64 @@ function applyDarkSurfaceTags(scopeEl, options = {}) {
   if (budgetHit) {
     result.budgetHit = true;
   }
+  if (surfaced >= maxSurfaces || forcedText >= maxForceText) {
+    result.capHit = true;
+  }
   return result;
 }
 
+function clearTrackedDarkSurfaceTags() {
+  let clearedSurface = 0;
+  let clearedSurfaceKind = 0;
+  let clearedForceText = 0;
+
+  AURA_SURFACE_TAG_STATE.surface.forEach((node) => {
+    if (node && typeof node.removeAttribute === 'function' && node.hasAttribute?.(AURA_SURFACE_ATTR)) {
+      node.removeAttribute(AURA_SURFACE_ATTR);
+      clearedSurface += 1;
+    }
+    if (node && typeof node.removeAttribute === 'function' && node.hasAttribute?.(AURA_SURFACE_KIND_ATTR)) {
+      node.removeAttribute(AURA_SURFACE_KIND_ATTR);
+      clearedSurfaceKind += 1;
+    }
+  });
+  AURA_SURFACE_TAG_STATE.forceText.forEach((node) => {
+    if (node && typeof node.removeAttribute === 'function' && node.hasAttribute?.(AURA_FORCE_TEXT_ATTR)) {
+      node.removeAttribute(AURA_FORCE_TEXT_ATTR);
+      clearedForceText += 1;
+    }
+  });
+
+  AURA_SURFACE_TAG_STATE.surface.clear();
+  AURA_SURFACE_TAG_STATE.forceText.clear();
+
+  return { clearedSurface, clearedSurfaceKind, clearedForceText };
+}
+
 function clearDarkSurfaceTags(scopeEl, options = {}) {
+  const tracked = clearTrackedDarkSurfaceTags();
+
   if (!scopeEl || scopeEl.nodeType !== 1) {
-    return { ok: false, scanned: 0, clearedSurface: 0, clearedForceText: 0, reason: 'invalid-scope' };
+    return {
+      ok: false,
+      scanned: 0,
+      clearedSurface: tracked.clearedSurface,
+      clearedSurfaceKind: tracked.clearedSurfaceKind,
+      clearedForceText: tracked.clearedForceText,
+      reason: 'invalid-scope',
+    };
   }
 
   const view = scopeEl.ownerDocument?.defaultView;
   if (!view) {
-    return { ok: false, scanned: 0, clearedSurface: 0, clearedForceText: 0, reason: 'missing-view' };
+    return {
+      ok: false,
+      scanned: 0,
+      clearedSurface: tracked.clearedSurface,
+      clearedSurfaceKind: tracked.clearedSurfaceKind,
+      clearedForceText: tracked.clearedForceText,
+      reason: 'missing-view',
+    };
   }
 
   const maxNodes = Number.isFinite(options.maxNodes) ? options.maxNodes : AURA_SURFACE_DEFAULT_BUDGET.maxNodes;
@@ -1825,8 +2971,9 @@ function clearDarkSurfaceTags(scopeEl, options = {}) {
     : null;
 
   let scanned = 0;
-  let clearedSurface = 0;
-  let clearedForceText = 0;
+  let clearedSurface = tracked.clearedSurface;
+  let clearedSurfaceKind = tracked.clearedSurfaceKind;
+  let clearedForceText = tracked.clearedForceText;
   let budgetHit = false;
 
   let node = walker ? walker.currentNode : scopeEl;
@@ -1848,6 +2995,10 @@ function clearDarkSurfaceTags(scopeEl, options = {}) {
       node.removeAttribute(AURA_SURFACE_ATTR);
       clearedSurface += 1;
     }
+    if (node.hasAttribute(AURA_SURFACE_KIND_ATTR)) {
+      node.removeAttribute(AURA_SURFACE_KIND_ATTR);
+      clearedSurfaceKind += 1;
+    }
     if (node.hasAttribute(AURA_FORCE_TEXT_ATTR)) {
       node.removeAttribute(AURA_FORCE_TEXT_ATTR);
       clearedForceText += 1;
@@ -1857,7 +3008,7 @@ function clearDarkSurfaceTags(scopeEl, options = {}) {
     node = walker ? walker.nextNode() : null;
   }
 
-  const result = { ok: true, scanned, clearedSurface, clearedForceText };
+  const result = { ok: true, scanned, clearedSurface, clearedSurfaceKind, clearedForceText };
   if (budgetHit) {
     result.budgetHit = true;
   }
@@ -1966,6 +3117,8 @@ function teardownAuraSurfaceObserver(scopeRoot) {
     unmarkScopeIfOwned,
     unmarkScopeIfOwnedBySelector,
     verifyScopeRootBySelector,
+    collectInspectionBaseline,
+    inspectPostApply,
     salvageScopeRootBySelector,
     applyScopedTokensBySelector,
     cleanupScopedTokensBySelector,

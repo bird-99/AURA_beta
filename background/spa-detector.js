@@ -1,15 +1,20 @@
 import { STATES, STORAGE_KEYS } from '../shared/constants.js';
-import { getFromLocal, getFromSession, setToSession } from '../shared/utils.js';
+import { getFromLocal, mutateSessionValue } from '../shared/utils.js';
 import { stateManager } from './state-manager.js';
+import { clearPolicyState } from './policy-engine.js';
 
-class SpaDetector {
+export class SpaDetector {
   constructor() {
     this.enabled = false;
     this.handleSpaNavigation = this.onSpaNavigation.bind(this);
+    this.handlePermissionAdded = this.onPermissionAdded.bind(this);
+    this.handlePermissionRemoved = this.onPermissionRemoved.bind(this);
     this.reapplyHandler = null;
+    this.permissionObserversInstalled = false;
   }
 
   async init() {
+    this.ensurePermissionObservers();
     const prefs = (await getFromLocal(STORAGE_KEYS.USER_PREFS)) || {};
     const spaDetectionEnabled = prefs.spaDetectionEnabled === true;
 
@@ -22,6 +27,7 @@ class SpaDetector {
   }
 
   async enable() {
+    this.ensurePermissionObservers();
     const hasPermission = await chrome.permissions.contains({ permissions: ['webNavigation'] });
     if (!hasPermission) {
       console.warn('[SPA Detector] webNavigation permission not granted; skipping SPA detection.');
@@ -47,6 +53,27 @@ class SpaDetector {
     this.enabled = false;
   }
 
+  ensurePermissionObservers() {
+    if (this.permissionObserversInstalled) return;
+    chrome.permissions?.onAdded?.addListener?.(this.handlePermissionAdded);
+    chrome.permissions?.onRemoved?.addListener?.(this.handlePermissionRemoved);
+    this.permissionObserversInstalled = true;
+  }
+
+  async onPermissionAdded(permissions) {
+    if (!permissions?.permissions?.includes('webNavigation')) return;
+    const prefs = (await getFromLocal(STORAGE_KEYS.USER_PREFS)) || {};
+    if (prefs.spaDetectionEnabled === true) {
+      await this.enable();
+    }
+  }
+
+  onPermissionRemoved(permissions) {
+    if (permissions?.permissions?.includes('webNavigation')) {
+      this.disable();
+    }
+  }
+
   setReapplyHandler(handler) {
     this.reapplyHandler = typeof handler === 'function' ? handler : null;
   }
@@ -55,21 +82,36 @@ class SpaDetector {
     if (!this.enabled) return;
     if (typeof details?.tabId !== 'number') return;
     if (details.frameId !== 0) return;
+    const hasPermission = await chrome.permissions.contains({ permissions: ['webNavigation'] });
+    if (!hasPermission) {
+      this.disable();
+      return;
+    }
 
     console.info(`[SPA Detector] SPA navigation detected on tab ${details.tabId}`);
     await this.resetTabSignals(details.tabId);
-    await this.reapplyActiveModes(details.tabId);
+    await this.reapplyActiveModes(details.tabId, {
+      url: typeof details.url === 'string' ? details.url : null,
+    });
   }
 
   async resetTabSignals(tabId) {
-    const activeSignals = (await getFromSession(STORAGE_KEYS.ACTIVE_SIGNALS)) || {};
-    if (tabId in activeSignals) {
+    await mutateSessionValue(STORAGE_KEYS.ACTIVE_SIGNALS, (storedSignals) => {
+      const activeSignals = storedSignals && typeof storedSignals === 'object' ? { ...storedSignals } : {};
       delete activeSignals[tabId];
-      await setToSession(STORAGE_KEYS.ACTIVE_SIGNALS, activeSignals);
-    }
+      return activeSignals;
+    });
+
+    await mutateSessionValue(STORAGE_KEYS.SIGNAL_SNAPSHOTS, (storedSnapshots) => {
+      const signalSnapshots = storedSnapshots && typeof storedSnapshots === 'object' ? { ...storedSnapshots } : {};
+      delete signalSnapshots[tabId];
+      return signalSnapshots;
+    });
+
+    await clearPolicyState(tabId);
   }
 
-  async reapplyActiveModes(tabId) {
+  async reapplyActiveModes(tabId, navigationContext = null) {
     try {
       const modes = await stateManager.getTabState(tabId);
       if (!modes) {
@@ -86,7 +128,7 @@ class SpaDetector {
         return;
       }
 
-      await this.reapplyHandler(tabId, 'spa');
+      await this.reapplyHandler(tabId, 'spa', navigationContext);
     } catch (error) {
       console.warn('[SPA Detector] Failed to trigger re-apply after SPA navigation', error);
     }
