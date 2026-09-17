@@ -1,0 +1,125 @@
+name: AURA pinned preflight audit
+
+on:
+  push:
+    branches: ['audit/preflight-dd32e96-20260917']
+    paths: ['.github/workflows/aura-preflight-audit.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: dd32e96876de08b2d63a36de299887b85c35da17
+          persist-credentials: false
+      - name: Archive exact source snapshot
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = 'dd32e96876de08b2d63a36de299887b85c35da17'
+          git archive --format=zip --output="$RUNNER_TEMP/aura-source-dd32e96.zip" HEAD
+          git ls-tree -r --long HEAD > "$RUNNER_TEMP/aura-source-tree.txt"
+          sha256sum "$RUNNER_TEMP/aura-source-dd32e96.zip" > "$RUNNER_TEMP/aura-source-sha256.txt"
+      - name: Preserve source for read-only review
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-source-dd32e96
+          path: |
+            ${{ runner.temp }}/aura-source-dd32e96.zip
+            ${{ runner.temp }}/aura-source-tree.txt
+            ${{ runner.temp }}/aura-source-sha256.txt
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install locked dependencies without lifecycle scripts
+        id: dependencies
+        continue-on-error: true
+        run: npm ci --ignore-scripts
+      - name: Static checks
+        id: static
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee "$RUNNER_TEMP/aura-static.log"
+      - name: Node tests
+        id: unit
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/aura-unit.log"
+      - name: Install Chromium
+        id: browser
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Functional browser tests
+        id: functional
+        if: steps.browser.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee "$RUNNER_TEMP/aura-e2e.log"
+      - name: Accessibility browser tests
+        id: accessibility
+        if: steps.browser.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:a11y 2>&1 | tee "$RUNNER_TEMP/aura-a11y.log"
+      - name: Dependency audit
+        id: audit
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --audit-level=moderate --json 2>&1 | tee "$RUNNER_TEMP/aura-dependencies.json"
+      - name: Record actual outcomes
+        if: always()
+        shell: bash
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          printf '%s\n' "$OUTCOMES" > "$RUNNER_TEMP/aura-outcomes.json"
+          printf 'Audited application commit: dd32e96876de08b2d63a36de299887b85c35da17\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '\n```json\n%s\n```\n' "$OUTCOMES" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all available audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-preflight-evidence
+          path: |
+            ${{ runner.temp }}/aura-*.log
+            ${{ runner.temp }}/aura-dependencies.json
+            ${{ runner.temp }}/aura-outcomes.json
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Fail audit if any mandatory check did not pass
+        if: always()
+        shell: bash
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          steps = json.loads(os.environ['OUTCOMES'])
+          names = ['dependencies', 'static', 'unit', 'browser', 'functional', 'accessibility', 'audit']
+          failed = [name for name in names if steps.get(name, {}).get('outcome') != 'success']
+          print('Checks not passed:', ', '.join(failed) if failed else 'none')
+          sys.exit(bool(failed))
+          PY
