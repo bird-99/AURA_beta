@@ -1,0 +1,37 @@
+name: Hardening validation toolchain
+on:
+  push:
+    branches: ['fix/aura-verified-hardening-20260917']
+    paths: ['.github/workflows/hardening-toolchain.yml']
+permissions:
+  contents: read
+jobs:
+  toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: dd32e96876de08b2d63a36de299887b85c35da17
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Archive locked dependencies and exact Node executable
+        shell: bash
+        run: |
+          node --version > "$RUNNER_TEMP/toolchain-version.txt"
+          npm --version >> "$RUNNER_TEMP/toolchain-version.txt"
+          tar -czf "$RUNNER_TEMP/aura-node-modules.tar.gz" node_modules
+          cp "$(command -v node)" "$RUNNER_TEMP/aura-node24"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-locked-toolchain
+          path: |
+            ${{ runner.temp }}/aura-node-modules.tar.gz
+            ${{ runner.temp }}/aura-node24
+            ${{ runner.temp }}/toolchain-version.txt
+          retention-days: 7
+          if-no-files-found: error
