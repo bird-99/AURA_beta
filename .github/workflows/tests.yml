@@ -1,31 +1,156 @@
 name: Test gate
-
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
-
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aura-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  e2e:
-    runs-on: ubuntu-latest
+  verify:
+    name: Verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      AURA_EVIDENCE_DIR: artifacts/browser
+      AURA_A11Y_RESULTS_DIR: artifacts/axe
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Install dependencies
-        run: npm ci
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-      - name: Run static checks
-        run: npm run typecheck
-      - name: Run unit tests
-        run: npm test
-      - name: Run functional e2e suite
-        run: xvfb-run -a npm run test:e2e
-      - name: Run accessibility suite
-        run: xvfb-run -a npm run test:a11y
-      - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+      - name: Record source and toolchain
+        run: |
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/tested-commit.txt
+          node --version > artifacts/toolchain.txt
+          npm --version >> artifacts/toolchain.txt
+      - name: Locked dependency installation
+        id: deps
+        run: npm ci --ignore-scripts
+      - name: Static checks
+        id: static
+        if: steps.deps.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee artifacts/static.log
+      - name: Node tests
+        id: node
+        if: steps.deps.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm test -- --test-reporter=tap 2>&1 | tee artifacts/node.tap
+      - name: Install pinned Chromium
+        id: browser
+        if: steps.deps.outcome == 'success'
+        continue-on-error: true
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Functional browser tests
+        id: functional
+        if: steps.browser.outcome == 'success'
+        continue-on-error: true
+        env:
+          AURA_SUITE: functional
+          AURA_TRACE_DIR: artifacts/traces/functional
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee artifacts/functional.log
+      - name: Accessibility with the common blocking threshold
+        id: a11y
+        if: steps.browser.outcome == 'success'
+        continue-on-error: true
+        env:
+          AURA_SUITE: accessibility
+          AURA_TRACE_DIR: artifacts/traces/accessibility
+        run: |
+          set -o pipefail
+          npm run test:a11y 2>&1 | tee artifacts/accessibility.log
+      - name: Normal-motion hardening and accessibility
+        id: motion
+        if: steps.browser.outcome == 'success'
+        continue-on-error: true
+        env:
+          AURA_SUITE: normal-motion
+          AURA_REDUCED_MOTION: no-preference
+          AURA_TRACE_DIR: artifacts/traces/normal-motion
+        run: |
+          set -o pipefail
+          npx --no-install playwright test --workers=1 tests/e2e/hardening.spec.js tests/e2e/a11y-options.spec.js tests/e2e/a11y-popup.spec.js tests/e2e/a11y-welcome.spec.js 2>&1 | tee artifacts/normal-motion.log
+      - name: Record individual outcomes
+        if: always()
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          mkdir -p artifacts
+          printf '%s\n' "$OUTCOMES" > artifacts/outcomes.json
+      - name: Preserve evidence even when a check fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ matrix.os }}
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Require every mandatory check
+        if: always()
+        env:
+          OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          node --input-type=module -e 'const s=JSON.parse(process.env.OUTCOMES);const failed=["deps","static","node","browser","functional","a11y","motion"].filter(k=>s[k]?.outcome!=="success"); console.log({failed}); process.exit(failed.length?1:0)'
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=moderate
+  passive-measurement:
+    name: Controlled passive-cost measurement
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: npx --no-install playwright install --with-deps chromium
+      - name: Measure reference, current and no-extension fixtures
+        env:
+          AURA_BASELINE_PATH: ${{ runner.temp }}/aura-reference
+        run: |
+          git worktree add --detach "$AURA_BASELINE_PATH" dd32e96876de08b2d63a36de299887b85c35da17
+          node scripts/measure-passive-cost.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: passive-cost-measurement
+          path: artifacts/passive-cost.json
+          if-no-files-found: error
+          retention-days: 7
